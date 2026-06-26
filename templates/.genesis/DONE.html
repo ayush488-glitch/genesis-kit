@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DONE — {{PROJECT_NAME}}</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --ink:#e6edf3; --mut:#8b949e;
+          --ok:#2ea043; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:920px; margin:0 auto; padding:32px 24px 80px; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  h2 { font-size:18px; margin:32px 0 12px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .sub { color:var(--mut); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:12px 0; }
+  .locked { border-left:3px solid var(--warn); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mut); font-weight:600; }
+  code { background:#1f2630; padding:1px 6px; border-radius:5px; font-size:13px; }
+  .gate { display:flex; gap:10px; align-items:flex-start; padding:6px 0; }
+  .box { width:16px; height:16px; border:1.5px solid var(--mut); border-radius:4px; flex:0 0 auto; margin-top:2px; }
+  .done .box { background:var(--ok); border-color:var(--ok); }
+  .done .label { color:var(--mut); text-decoration:line-through; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+  .pill.ok{color:var(--ok);border-color:var(--ok);} .pill.wip{color:var(--warn);border-color:var(--warn);}
+  .note { color:var(--mut); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>DONE — {{PROJECT_NAME}}</h1>
+  <p class="sub">The single source of truth for <b>what "done" means</b> and <b>the implementation plan</b>.
+     This file is LOCKED — the driver model may not edit it without explicit user request.
+     Updated: {{DATE}}</p>
+
+  <!-- ───────────── THE LOCKED SPEC ───────────── -->
+  <h2>1 · The Locked Spec (what we are building)</h2>
+  <div class="card locked">
+    <p><b>Cognitive job:</b> {{COGNITIVE_JOB}}</p>
+    <p><b>Inputs:</b> {{INPUTS}} &nbsp;→&nbsp; <b>Outputs:</b> {{OUTPUTS}}</p>
+    <p><b>Autonomy level:</b> {{AUTONOMY}} &nbsp;|&nbsp; <b>Human-in-the-loop points:</b> {{HITL}}</p>
+    <p><b>Failure tolerance:</b> {{FAILURE_TOLERANCE}} &nbsp;|&nbsp; <b>Trust boundary:</b> {{TRUST_BOUNDARY}}</p>
+    <p class="note">Filled during Genesis step G0 (Cognitive Design) via <code>agentic-swe-master</code>.</p>
+  </div>
+
+  <!-- ───────────── DEFINITION OF DONE ───────────── -->
+  <h2>2 · Definition of Done (binary gates — checked by the VERIFIER, not the maker)</h2>
+  <div class="card">
+    <div class="gate"><span class="box"></span><span class="label">Dependency direction inward, zero cycles <span class="note">(modular-architecture gate)</span></span></div>
+    <div class="gate"><span class="box"></span><span class="label">Every outbound call has a timeout / circuit-breaker <span class="note">(production-readiness gate)</span></span></div>
+    <div class="gate"><span class="box"></span><span class="label">All LLM/structured outputs validated against a schema <span class="note">(llmops gate)</span></span></div>
+    <div class="gate"><span class="box"></span><span class="label">Threat model written; prompt-injection / untrusted-input considered <span class="note">(security gate)</span></span></div>
+    <div class="gate"><span class="box"></span><span class="label"><code>{{TYPECHECK_CMD}}</code> clean AND <code>{{TEST_CMD}}</code> green in CI</span></div>
+    <div class="gate"><span class="box"></span><span class="label">One <code>verify</code> pass by a <b>separate</b> agent/model (L4)</span></div>
+    <div class="gate"><span class="box"></span><span class="label">No <code>context-graph.json</code> invariant violated by the change</span></div>
+    <p class="note">A milestone is DONE only when every box above is checked by the verifier. Pull each
+       gate from the relevant <code>agentic-swe-master</code> phase gate.</p>
+  </div>
+
+  <!-- ───────────── IMPLEMENTATION PLAN ───────────── -->
+  <h2>3 · Implementation Plan (the work, sliced into milestones)</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Milestone</th><th>Phase</th><th>Demo command (proves it works)</th><th>Loops</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>M1</td><td>{{M1_NAME}}</td><td>{{M1_PHASE}}</td><td><code>{{M1_DEMO}}</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M2</td><td>{{M2_NAME}}</td><td>{{M2_PHASE}}</td><td><code>{{M2_DEMO}}</code></td><td>L1, L3, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M3</td><td>{{M3_NAME}}</td><td>{{M3_PHASE}}</td><td><code>{{M3_DEMO}}</code></td><td>L1, L2, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>…</td><td>add rows as the plan is sliced</td><td></td><td></td><td></td><td></td></tr>
+      </tbody>
+    </table>
+    <p class="note">Total token budget = (n milestones × {{MILESTONE_BUDGET}}). Update <span class="pill wip">wip</span> /
+       <span class="pill ok">done</span> as loops complete. This table is mirrored in <code>PLAN.md</code> for the agent to parse.</p>
+  </div>
+
+  <!-- ───────────── SKILL LOADING ───────────── -->
+  <h2>4 · Skill Loading Per Milestone</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Milestone</th><th>Always-on canon</th><th>Milestone-specific skills</th></tr></thead>
+      <tbody>
+        <tr><td>M1</td><td>agentic-swe-master, {{ROUTER_SKILL}}, modular-architecture</td><td>tdd, data-systems-engineering</td></tr>
+        <tr><td>M2</td><td>(canon)</td><td>tdd, production-readiness, llmops-ai-agents</td></tr>
+        <tr><td>M3</td><td>(canon)</td><td>tdd, security-engineering, distributed-systems</td></tr>
+        <tr><td>frontend M*</td><td>(canon)</td><td><b>design-system skill (MANDATORY)</b>, tdd, qa</td></tr>
+      </tbody>
+    </table>
+    <p class="note">If a milestone needs a skill not listed, G1 logs "skill X needed but not on the menu — loaded ad hoc" so the choice is visible.</p>
+  </div>
+
+</div>
+</body>
+</html>

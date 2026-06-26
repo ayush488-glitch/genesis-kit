@@ -1,0 +1,8 @@
+# build artifacts
+genesis-kit.zip
+*.zip
+vendor/
+node_modules/
+# os
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Implementation Notes — {{PROJECT_NAME}} (rolling state)</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --ink:#e6edf3; --mut:#8b949e;
+          --ok:#2ea043; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:920px;margin:0 auto;padding:32px 24px 80px;}
+  h1{font-size:24px;margin:0 0 4px;}
+  h2{font-size:17px;margin:28px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px;}
+  .sub{color:var(--mut);margin:0 0 20px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0;}
+  .live{border-left:3px solid var(--ok);}
+  code{background:#1f2630;padding:1px 6px;border-radius:5px;font-size:13px;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{color:var(--mut);font-weight:600;}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut);}
+  .pill.live{color:var(--ok);border-color:var(--ok);} .pill.wip{color:var(--warn);border-color:var(--warn);} .pill.gone{color:var(--bad);border-color:var(--bad);}
+  .note{color:var(--mut);font-size:13px;}
+  ul{margin:6px 0;padding-left:20px;} li{margin:3px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Implementation Notes — {{PROJECT_NAME}}</h1>
+  <p class="sub"><b>Rolling source of truth for what is LIVE right now.</b> The wiki can lag; this file
+     cannot. Read this on every session start to avoid rebuilding what exists. This is your
+     <i>git-like restart point</i>: if context is lost, this file rehydrates you.
+     Last updated: <code>{{TIMESTAMP}}</code> · by loop: <code>{{LOOP_ID}}</code></p>
+
+  <!-- ───────────── ONE-LINE STATUS ───────────── -->
+  <div class="card live">
+    <b>Now in flight:</b> {{NOW_IN_FLIGHT}}<br>
+    <b>Active loop:</b> {{ACTIVE_LOOP}} · <b>Current milestone:</b> {{MILESTONE_ID}} · <b>Phase:</b> {{PHASE}}<br>
+    <b>Blocked on:</b> {{BLOCKERS}}
+  </div>
+
+  <!-- ───────────── WHAT'S LIVE ───────────── -->
+  <h2>What is actually built &amp; live</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Capability</th><th>Where (file/route/symbol)</th><th>Status</th><th>Verified by</th></tr></thead>
+      <tbody>
+        <tr><td>{{CAP_1}}</td><td><code>{{LOC_1}}</code></td><td><span class="pill live">live</span></td><td>{{VERIFY_1}}</td></tr>
+        <tr><td>{{CAP_2}}</td><td><code>{{LOC_2}}</code></td><td><span class="pill wip">partial</span></td><td>—</td></tr>
+        <tr><td>add rows as milestones complete…</td><td></td><td></td><td></td></tr>
+      </tbody>
+    </table>
+    <p class="note">Append a row the moment a milestone passes L4 VERIFY. The grep in G0 checks against this table.</p>
+  </div>
+
+  <!-- ───────────── DECISIONS THAT BIND ───────────── -->
+  <h2>Decisions that constrain new work</h2>
+  <div class="card">
+    <ul>
+      <li><code>{{DECISION_ID}}</code> — {{DECISION_SUMMARY}} → see <code>decisions/{{DECISION_ID}}.md</code></li>
+      <li>add ADR pointers here so future loops don't relitigate settled calls</li>
+    </ul>
+  </div>
+
+  <!-- ───────────── KNOWN GAPS / NEXT ───────────── -->
+  <h2>Known gaps &amp; the ordered Next list</h2>
+  <div class="card">
+    <ol>
+      <li>{{NEXT_1}}</li>
+      <li>{{NEXT_2}}</li>
+    </ol>
+    <p class="note">Mirror of <code>checkpoints/CURRENT.md → next_action</code>, but human-readable and durable across compaction.</p>
+  </div>
+
+  <!-- ───────────── SESSION LOG (append-only) ───────────── -->
+  <h2>Session log (append-only, newest first)</h2>
+  <div class="card">
+    <p><code>{{TIMESTAMP}}</code> — {{SESSION_SUMMARY}}</p>
+    <p class="note">One paragraph per session: what shipped, what broke, what's next. This is the narrative the next cold session reads first.</p>
+  </div>
+
+</div>
+</body>
+</html>

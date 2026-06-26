@@ -1,0 +1,14 @@
+{
+  "$comment": "Per-project causal/dependency graph. nodes=modules/files, edges=[cause,effect] (cause is imported-by effect), invariants=health rules the L4 verifier checks before declaring done. Regenerate the skeleton with tools/graphizer.mjs; add invariants BY HAND.",
+  "project": "{{PROJECT_NAME}}",
+  "generated": "{{TIMESTAMP}}",
+  "nodes": [],
+  "edges": [],
+  "invariants": {
+    "$example_node": "Plain-English health rule, e.g. 'API latency < 200ms' or 'domain layer imports no framework'."
+  },
+  "freeze_boundary": [
+    "$comment: globs the driver may edit; everything else is off-limits without explicit user request",
+    "src/**"
+  ]
+}
