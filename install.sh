@@ -52,9 +52,18 @@ cat <<EOF
 
 Start a project in any agent:
   1.  cd <your-project>
-  2.  "$KIT_DIR/tools/scaffold.sh" .            # drops .genesis/ spine
+  2.  "$KIT_DIR/tools/scaffold.sh" .
+        ↳ will ask: cheap/driver model, flagship/checker model,
+          router skill, token budget, max loop iterations.
+          Press Enter to accept the defaults.
   3.  node "$KIT_DIR/tools/graphizer.mjs" . --write   # builds context-graph
   4.  invoke the 'genesis' skill and run G0–G6 (see .genesis/genesis.md)
+
+  Non-interactive (CI / onboarding scripts):
+    scaffold.sh . --cheap-model claude-haiku-4-5 \\
+                  --flagship-model claude-opus-4-5 \\
+                  --router-skill coding-orchestrator \\
+                  --budget 50000 --max-iters 10
 
 Restart your shell (or: source $SHELL_RC) so GENESIS_KIT_ROOT is set.
 ────────────────────────────────────────────────────────
