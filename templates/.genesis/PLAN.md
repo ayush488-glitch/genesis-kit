@@ -9,6 +9,30 @@ human/visual view; this is the one loops read). Sliced so each milestone ships i
 
 ---
 
+## Brainstorm (G0.5 — fill before slicing milestones)
+
+> Three fundamentally different approaches to the cognitive job. Pick one. Record the rationale.
+> This is the cheapest design decision — you haven't written a line of code yet.
+
+### Approach A — {{APPROACH_A_NAME}}
+{{APPROACH_A_DESCRIPTION}}
+- Strengths: {{APPROACH_A_STRENGTHS}}
+- Weaknesses: {{APPROACH_A_WEAKNESSES}}
+
+### Approach B — {{APPROACH_B_NAME}}
+{{APPROACH_B_DESCRIPTION}}
+- Strengths: {{APPROACH_B_STRENGTHS}}
+- Weaknesses: {{APPROACH_B_WEAKNESSES}}
+
+### Approach C — {{APPROACH_C_NAME}}
+{{APPROACH_C_DESCRIPTION}}
+- Strengths: {{APPROACH_C_STRENGTHS}}
+- Weaknesses: {{APPROACH_C_WEAKNESSES}}
+
+### Chosen: {{CHOSEN_APPROACH}} — {{CHOSEN_RATIONALE}}
+
+---
+
 ## Milestones
 
 ### M1 — {{M1_NAME}}

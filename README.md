@@ -25,11 +25,21 @@ cd genesis-kit
 
 Detects `~/.hermes`, `~/.claude`, `~/.codex` and installs into each. Sets `GENESIS_KIT_ROOT`.
 
+The cognitive skills referenced in LOOPS.md (`detective`, `verify`, `scout`, `blueprint`, `council`,
+`ghost`, `foresight`) live in a separate repo. Install them alongside the kit:
+
+```bash
+git clone https://github.com/ayush488-glitch/skills-directory ~/Desktop/skills-directory
+# install.sh already adds it to the skill resolution order
+```
+
 ## Start a project (the ritual)
 
 ```bash
 cd <your-project>
-$GENESIS_KIT_ROOT/tools/scaffold.sh .             # 1. drop the .genesis/ spine
+$GENESIS_KIT_ROOT/tools/scaffold.sh .
+# ↳ prompts for cheap model, flagship model, router skill, budget, max iters
+# press Enter to accept defaults (haiku driver / opus checker / coding-orchestrator)
 node $GENESIS_KIT_ROOT/tools/graphizer.mjs . --write   # 2. build context-graph.json
 # 3. in your agent: invoke the `genesis` skill, run G0–G6 (see .genesis/genesis.md)
 ```

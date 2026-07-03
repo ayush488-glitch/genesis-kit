@@ -60,8 +60,16 @@ Skipping G0 = wasted tokens and a duplicate implementation that drifts.
   - `{{ROUTER_SKILL}}` (route before any code)
   - `modular-architecture` (boundary calls)
   - `production-readiness` (whenever touching backend)
-- **Skill resolution order:** {{SKILL_RESOLUTION_ORDER}} (see `AGENT-ADAPTERS.md` for per-agent paths).
-- **Cognitive skills available** (from skills-directory, composable — a loop may call any): `detective` (debug), `verify` (check output), `blueprint` (design before build), `scout` (explore options), `council`/`mirror` (adversarial self-review), `ghost` (shadow/canary), `foresight` (predict failures).
+- **`{{ROUTER_SKILL}}` explained:** the router skill is a lightweight classifier that reads the
+  current task and picks the right domain skill (e.g. `coding-orchestrator` reads the task type
+  and routes to `tdd`, `security-engineering`, `llmops-ai-agents`, etc.). If you don't have one,
+  use `coding-orchestrator` from the agentic-swe-kit — it ships with genesis.
+- **Skill resolution order:** agent-global skills → ~/Desktop/skills-directory → .genesis/skills/
+  (see `AGENT-ADAPTERS.md` for per-agent paths).
+- **Cognitive skills available** (from skills-directory — install separately if missing):
+  `detective` (debug), `verify` (check output), `blueprint` (design before build),
+  `scout` (explore options), `council`/`mirror` (adversarial self-review),
+  `ghost` (shadow/canary), `foresight` (predict failures).
 - Repo conventions live in `AGENTS.md`/`CLAUDE.md` and `.genesis/wiki/` — every loop reads them at start.
 
 ---
@@ -252,6 +260,22 @@ checkpoint_append(verdict, reasoning)
 APPROVE → PASS; REJECT → FAIL_WITH(reasoning); UNCERTAIN → surface_to_user
 ```
 
+**Quiz-me gate (runs on APPROVE before milestone is marked done):**
+The verifier generates 3 targeted questions from the artifact — one per category:
+  1. Design decision: "Why was [interface/approach X] chosen over the obvious alternative?"
+  2. Edge case:       "What happens when [specific boundary condition] occurs?"
+  3. Change impact:   "What does [this migration / function / schema change] do?"
+Post the questions to the human. Wait for answers. Log Q+A to the milestone checkpoint.
+If the human cannot answer → downgrade verdict to UNCERTAIN, surface to user.
+The milestone is NOT marked done until the Q+A block is written to the checkpoint.
+```
+quiz = verifier.generate_questions(artifact, 3)   # design · edge case · change impact
+answers = wait_for_human(quiz)
+checkpoint_append("Q+A block", quiz, answers)
+if any(answer == "don't know" or answer == "skip") → verdict = UNCERTAIN → surface_to_user
+APPROVE + Q+A block logged → mark milestone done
+```
+
 **Iteration cap:** 1. **Token budget:** {{VERIFY_BUDGET}}.
 
 ---
@@ -259,7 +283,10 @@ APPROVE → PASS; REJECT → FAIL_WITH(reasoning); UNCERTAIN → surface_to_user
 ## L5 — HEALTH LOOP
 
 **Purpose:** keep `wiki/`, `PLAN.md`, `decisions/` clean as build progresses. On demand or scheduled.
-Reports findings only — **never auto-fixes.** Skills: `agentic-swe-master`, `wiki-lint`/`learn`.
+Reports findings only — **never auto-fixes.**
+Skills: `agentic-swe-master` + any of: `learn` (gstack), `dogfood`, or manual wiki review.
+(`wiki-lint` is not a standard skill — if your agent has it, use it; otherwise do a manual
+pass: read every wiki page, flag stale entries, surface gaps. Write findings to `wiki/log.md`.)
 
 ---
 
