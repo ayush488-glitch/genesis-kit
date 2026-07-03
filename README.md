@@ -148,7 +148,41 @@ automation (see `AGENT-ADAPTERS.md`).
 
 ---
 
-## What the spine looks like (created per project)
+## What's in the spine (features)
+
+### G0.5 — Brainstorm before you build (P1)
+Before slicing milestones, generate 3 fundamentally different approaches, pick one
+with rationale. Lives in `PLAN.md → Brainstorm section`. Cheapest place to avoid
+committing to the wrong architecture.
+
+### Interview mode — surface unknown knowns (P2)
+`.genesis/KICKOFF-INTERVIEW.md` — paste into your agent before G0. It asks you
+12 questions (trade-offs, perf constraints, UX expectations, integrations, failure
+modes, known unknowns) and produces `decisions/decisions-manifest.md` before a
+single line of code is written. The trap is assuming the agent knows what "good"
+means to you — it doesn't until you say it.
+
+### Deviation log — institutional memory (P3)
+`implementation-notes.html` has an append-only deviation table between "Decisions
+that constrain" and "Known gaps". Every time the agent can't follow the plan and
+pivots, it records: date · milestone · planned approach · actual approach · reason ·
+invariant impact. Future sessions never wonder why the code looks different from PLAN.md.
+
+### Quiz-me gate on L4 VERIFY (P4)
+After a VERIFY APPROVE verdict, before a milestone is marked done, the verifier
+asks you 3 targeted questions: one design decision, one edge case, one change impact.
+If you can't answer → verdict downgrades to UNCERTAIN, milestone stays open. No
+more rubber-stamp "looks good" merges.
+
+### Model/config prompts in scaffold (P5)
+`scaffold.sh` now asks for cheap model, flagship model, router skill, token budget,
+and max loop iterations before laying the spine. Press Enter for defaults
+(`claude-haiku-4-5` driver / `claude-opus-4-5` checker / `coding-orchestrator`).
+No `{{CHEAP_MODEL}}` placeholders survive into your working files.
+
+---
+
+
 
 ```
 <project>/.genesis/
