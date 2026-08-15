@@ -22,7 +22,10 @@ MILESTONE_BUDGET=""
 MAX_ITERS=""
 EXPLAIN_DIFF=""
 
-shift 2 2>/dev/null || true
+# Consume only the positionals actually supplied. [project-name] is optional,
+# so don't consume it if the next argument is really a flag.
+if [[ $# -gt 0 ]]; then shift; fi
+if [[ $# -gt 0 && "$1" != -* ]]; then shift; fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cheap-model)    CHEAP_MODEL="$2";    shift 2 ;;
