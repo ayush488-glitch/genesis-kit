@@ -7,6 +7,7 @@ import {
   statSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SCHEMA_VERSION = 2;
 const RISK = new Set(['low', 'medium', 'high', 'critical']);
@@ -137,19 +138,32 @@ function revision(repo) {
   return { ...gitInfo(repo), source_hash: contentHash(repo) };
 }
 
-function redact(value) {
-  let text = typeof value === 'string' ? value : JSON.stringify(value);
-  text = text
+function redactText(value) {
+  return String(value)
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
     .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
     .replace(/\b(api[_-]?key|token|password|secret|authorization)\b\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]');
-  return text;
+}
+
+function redact(value, key = '') {
+  if (/^(api[_-]?key|token|password|secret|authorization)$/i.test(key)) return '[REDACTED]';
+  if (Array.isArray(value)) return value.map((item) => redact(item));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, redact(item, name)]));
+  return typeof value === 'string' ? redactText(value) : value;
 }
 
 function trace(repo, event, data = {}) {
   const path = join(genesisDir(repo), 'local', 'events.jsonl');
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify({ at: now(), event, data: JSON.parse(redact(data)) })}\n`);
+  appendFileSync(path, `${JSON.stringify({ at: now(), event, data: redact(data) })}\n`);
+}
+
+function recentTraces(repo, limit = 50) {
+  const path = join(genesisDir(repo), 'local', 'events.jsonl');
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).slice(-limit).map((line) => {
+    try { return JSON.parse(line); } catch { return { at: null, event: 'invalid-trace', data: { line: redactText(line) } }; }
+  });
 }
 
 function discover(repo) {
@@ -267,6 +281,10 @@ function renderKickoff(repo, state) {
   const hash = contentHash(repo);
   const active = state.tasks.find((task) => task.id === state.lifecycle.active_task) || null;
   const completed = state.tasks.filter((task) => task.state === 'done');
+  const activeGates = active?.gates.map((gate) => freshGate(gate, hash)) || [];
+  const decisionText = state.decisions.map((item) => typeof item === 'string' ? item : `${item.id}: ${item.title || item.text}`).join(', ');
+  const invariantText = state.invariants.map((item) => typeof item === 'string' ? item : `${item.id}: ${item.text}`).join('; ');
+  const assumptionText = state.assumptions.map((item) => typeof item === 'string' ? item : `${item.id}: ${item.text} [${item.status || 'open'}]`).join('; ');
   const lines = [
     `# KICKOFF — ${state.project.name}`,
     '',
@@ -280,19 +298,30 @@ function renderKickoff(repo, state) {
     `- mode/profile: ${state.project.mode} / ${state.project.profile}`,
     `- phase/status: ${state.lifecycle.phase} / ${state.lifecycle.status}`,
     `- active task: ${active ? `${active.id} — ${active.outcome}` : 'none'}`,
+    `- owner: ${active?.owner || 'unassigned'}`,
     `- blocker: ${state.lifecycle.blocker || 'none'}`,
     `- next action: ${state.lifecycle.next_action}`,
     `- source hash: ${hash}`,
     '',
     '## Completed work',
     '',
-    ...(completed.length ? completed.map((task) => `- ${task.id}: ${task.outcome}`) : ['- none']),
+    ...(completed.length ? completed.map((task) => `- ${task.id}: ${task.outcome} · proof: ${task.gates.map((gate) => gate.evidence?.path || `${gate.id}:${gate.status}`).join(', ') || 'no gates'}`) : ['- none']),
+    '',
+    '## Active evidence and failures',
+    '',
+    ...(active ? [
+      `- gates: ${activeGates.map((gate) => `${gate.id}:${gate.effective_status}${gate.evidence?.path ? ` (${gate.evidence.path})` : ''}`).join(', ') || 'none'}`,
+      `- failures: ${active.failures?.join('; ') || 'none recorded'}`,
+      `- limitations: ${active.limitations?.join('; ') || 'none recorded'}`,
+      `- notes: ${active.notes?.join('; ') || 'none recorded'}`,
+    ] : ['- no active task']),
     '',
     '## Binding context',
     '',
-    `- decisions: ${state.decisions.length ? state.decisions.join(', ') : 'none recorded'}`,
-    `- invariants: ${state.invariants.length ? state.invariants.join('; ') : 'none confirmed'}`,
-    `- assumptions: ${state.assumptions.length ? state.assumptions.map((item) => item.text || item).join('; ') : 'none recorded'}`,
+    `- decisions: ${decisionText || 'none recorded'}`,
+    `- invariants: ${invariantText || 'none confirmed'}`,
+    `- assumptions: ${assumptionText || 'none recorded'}`,
+    `- knowledge: ${state.knowledge.length ? state.knowledge.map((item) => `${item.id}: ${item.title}`).join(', ') : 'none recorded'}`,
     '',
     '## Resume',
     '',
@@ -313,10 +342,12 @@ function html(value) {
 function renderDashboard(repo, state) {
   const hash = contentHash(repo);
   const tasks = state.tasks.map((task) => taskSummary(task, hash));
+  const traces = recentTraces(repo);
   const rows = tasks.map((task) => {
     const gates = task.gates.map((gate) => `${html(gate.id)}: ${html(gate.effective_status)}`).join('<br>') || 'none';
     return `<tr><td>${html(task.id)}</td><td>${html(task.outcome)}</td><td>${html(task.state)}</td><td>${html(task.risk)}</td><td>${gates}</td><td>${html(task.next_action || '')}</td></tr>`;
   }).join('\n');
+  const traceRows = traces.slice().reverse().map((item) => `<tr><td>${html(item.at || '')}</td><td>${html(item.event)}</td><td><code>${html(JSON.stringify(item.data))}</code></td></tr>`).join('\n');
   const page = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="5"><title>Genesis — ${html(state.project.name)}</title>
@@ -325,12 +356,13 @@ function renderDashboard(repo, state) {
 <section class="grid"><div class="card"><b>Phase</b><div>${html(state.lifecycle.phase)}</div></div><div class="card"><b>Status</b><div>${html(state.lifecycle.status)}</div></div><div class="card"><b>Active task</b><div>${html(state.lifecycle.active_task || 'none')}</div></div><div class="card"><b>Blocker</b><div>${html(state.lifecycle.blocker || 'none')}</div></div></section>
 <h2>Next action</h2><div class="card">${html(state.lifecycle.next_action)}</div>
 <h2>Tasks and proof</h2><table><thead><tr><th>ID</th><th>Outcome</th><th>State</th><th>Risk</th><th>Gates</th><th>Next</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No tasks yet.</td></tr>'}</tbody></table>
+<h2>Recent local traces</h2><table><thead><tr><th>At</th><th>Event</th><th>Redacted data</th></tr></thead><tbody>${traceRows || '<tr><td colspan="3">No traces yet.</td></tr>'}</tbody></table>
 <h2>Source</h2><code>${html(hash)}</code><p class="muted">Raw traces: local/events.jsonl (local only)</p></main></body></html>\n`;
   atomicWrite(join(genesisDir(repo), 'dashboard.html'), page);
 }
 
 function runGraphizer(repo) {
-  const graphizer = join(dirname(new URL(import.meta.url).pathname), 'graphizer.mjs');
+  const graphizer = join(dirname(fileURLToPath(import.meta.url)), 'graphizer.mjs');
   const result = spawnSync(process.execPath, [graphizer, repo, '--write'], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr.trim() || 'graph indexing failed');
   return result.stderr.trim();
@@ -401,6 +433,7 @@ function commandTrace(parsed) {
   const data = { task: parsed.options.task || null, message: parsed.options.message || '' };
   if (parsed.options.data && parsed.options.data !== true) data.detail = JSON.parse(parsed.options.data);
   trace(repo, event, data);
+  renderDashboard(repo, loadState(repo));
   console.log(`Recorded ${event}`);
 }
 
@@ -427,7 +460,7 @@ function commandTask(parsed, raw) {
       scope: values(nested.options.scope), dependencies: values(nested.options.depends),
       gates: values(nested.options.gate).map(parseGate),
       next_action: nested.options.next === true || !nested.options.next ? 'Run the task pre-flight.' : nested.options.next,
-      blocker: null, created_at: now(), updated_at: now(),
+      blocker: null, notes: [], failures: [], limitations: [], created_at: now(), updated_at: now(),
     };
     state.tasks.push(task);
     if (!state.lifecycle.active_task) {
@@ -450,6 +483,9 @@ function commandTask(parsed, raw) {
     }
     if (nested.options.next && nested.options.next !== true) task.next_action = nested.options.next;
     if (nested.options.blocker !== undefined) task.blocker = nested.options.blocker === true ? null : nested.options.blocker;
+    task.notes.push(...values(nested.options.note));
+    task.failures.push(...values(nested.options.failure));
+    task.limitations.push(...values(nested.options.limitation));
     task.updated_at = now();
     if (state.lifecycle.active_task === id) {
       state.lifecycle.status = task.state;
@@ -485,6 +521,29 @@ function commandTask(parsed, raw) {
     return;
   }
   throw new Error(`unknown task action: ${action}`);
+}
+
+function commandRecord(parsed, raw) {
+  const type = raw[1];
+  const nested = parseArgs(raw.slice(2));
+  const repo = resolve(nested.positional[0] || '.');
+  const state = loadState(repo);
+  const id = nested.options.id === true || !nested.options.id ? `${type.toUpperCase()}-${randomUUID().slice(0, 8)}` : nested.options.id;
+  if (type === 'knowledge') {
+    if (!nested.options.title || nested.options.title === true || !nested.options.text || nested.options.text === true) throw new Error('knowledge requires --title and --text');
+    state.knowledge.push({ id, title: nested.options.title, text: nested.options.text, source: nested.options.source || null, tags: values(nested.options.tag), recorded_at: now() });
+  } else if (type === 'decision') {
+    if (!nested.options.title || nested.options.title === true || !nested.options.text || nested.options.text === true) throw new Error('decision requires --title and --text');
+    state.decisions.push({ id, title: nested.options.title, text: nested.options.text, status: nested.options.status || 'accepted', source: nested.options.source || null, recorded_at: now() });
+  } else if (type === 'assumption') {
+    if (!nested.options.text || nested.options.text === true) throw new Error('assumption requires --text');
+    state.assumptions.push({ id, text: nested.options.text, status: nested.options.status || 'open', source: nested.options.source || null, recorded_at: now() });
+  } else if (type === 'invariant') {
+    if (!nested.options.text || nested.options.text === true) throw new Error('invariant requires --text');
+    state.invariants.push({ id, text: nested.options.text, source: nested.options.source || 'human-confirmed', recorded_at: now() });
+  } else throw new Error(`unknown record type: ${type}`);
+  saveState(repo, state, `${type}.recorded`, { id });
+  console.log(`Recorded ${id}`);
 }
 
 function commandGate(parsed) {
@@ -630,6 +689,7 @@ Usage:
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
+  genesis record <knowledge|decision|assumption|invariant> <repo> ...
   genesis task add <repo> --id ID --outcome TEXT [--risk low] [--gate id:command]
   genesis task set|complete <repo> --id ID
   genesis gate <repo> [task-id]
@@ -649,6 +709,7 @@ async function main(raw) {
   if (command === 'checkpoint' || command === 'kickoff') return commandCheckpoint(parsed);
   if (command === 'dashboard') return commandDashboard(parsed);
   if (command === 'trace') return commandTrace(parsed);
+  if (command === 'record') return commandRecord(parsed, raw);
   if (command === 'task') return commandTask(parsed, raw);
   if (command === 'gate') return commandGate(parsed);
   if (command === 'control') return commandControl(parsed, raw);
