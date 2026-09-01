@@ -599,6 +599,8 @@ function commandControl(parsed, raw) {
     if (!record.human) throw new Error('manual gate approval requires --human');
     const gate = task.gates.find((item) => item.id === nested.options.gate);
     if (!gate) throw new Error(`unknown gate: ${nested.options.gate}`);
+    if (gate.command) throw new Error(`executable gate ${gate.id} must be run, not manually approved`);
+    if (task.owner && task.owner === record.human) throw new Error('task owner cannot approve independent review');
     gate.status = 'pass';
     gate.evidence = { human: record.human, reason: record.reason, source_hash: contentHash(repo), observed_at: record.at };
   } else if (action === 'pause') task.state = 'paused';
