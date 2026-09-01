@@ -1,74 +1,32 @@
 #!/usr/bin/env bash
-# install.sh — install the Genesis kit + the agentic-swe-kit into every agent found on this machine.
-# Agent-agnostic: detects Hermes, Claude Code, and Codex skill dirs and installs into each.
-# Usage:  ./install.sh
 set -euo pipefail
 
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "▶ Genesis kit at: $KIT_DIR"
+command -v node >/dev/null || { echo "Genesis requires Node.js 18+." >&2; exit 1; }
+node -e 'if (+process.versions.node.split(".")[0] < 18) process.exit(1)' \
+  || { echo "Genesis requires Node.js 18+." >&2; exit 1; }
 
-# ── 1. Install / locate the agentic-swe-kit (the knowledge graph + orchestrator) ───────────────
-SWE_KIT=""
-for cand in "$KIT_DIR/vendor/agentic-swe-kit" "$HOME/Desktop/agentic-swe-kit" "$KIT_DIR/../agentic-swe-kit"; do
-  if [[ -d "$cand" ]]; then SWE_KIT="$cand"; break; fi
-done
-if [[ -z "$SWE_KIT" ]]; then
-  echo "… agentic-swe-kit not found locally; cloning"
-  git clone https://github.com/ayush488-glitch/agentic-swe-kit "$KIT_DIR/vendor/agentic-swe-kit" 2>/dev/null \
-    && SWE_KIT="$KIT_DIR/vendor/agentic-swe-kit" \
-    || echo "⚠️  could not clone agentic-swe-kit — install it manually and re-run."
-fi
-if [[ -n "$SWE_KIT" && -x "$SWE_KIT/install.sh" ]]; then
-  echo "▶ running agentic-swe-kit installer"
-  (cd "$SWE_KIT" && ./install.sh) || echo "⚠️  swe-kit installer returned non-zero; continuing."
-fi
-
-# ── 2. Detect agent skill directories ──────────────────────────────────────────────────────────
-TARGETS=()
-[[ -d "$HOME/.hermes" ]] && TARGETS+=("$HOME/.hermes/skills")
-[[ -d "$HOME/.claude" ]] && TARGETS+=("$HOME/.claude/skills")
-[[ -d "$HOME/.codex"  ]] && TARGETS+=("$HOME/.codex/skills")
-if [[ ${#TARGETS[@]} -eq 0 ]]; then
-  echo "… no agent dirs found (~/.hermes, ~/.claude, ~/.codex). Installing to ~/.claude/skills as default."
-  TARGETS+=("$HOME/.claude/skills")
-fi
-
-# ── 3. Install kit skills into each agent ─────────────────────────────────────────────────────
-for dir in "${TARGETS[@]}"; do
-  mkdir -p "$dir/genesis"
-  cp "$KIT_DIR/skills/genesis/SKILL.md" "$dir/genesis/SKILL.md"
-  echo "✅ genesis skill → $dir/genesis"
-  mkdir -p "$dir/explain-diff-html"
-  cp "$KIT_DIR/skills/explain-diff-html/SKILL.md" "$dir/explain-diff-html/SKILL.md"
-  echo "✅ explain-diff-html skill → $dir/explain-diff-html"
+for AGENT_DIR in "$HOME/.codex/skills" "$HOME/.claude/skills"; do
+  mkdir -p "$AGENT_DIR/genesis"
+  cp "$KIT_DIR/skills/genesis/SKILL.md" "$AGENT_DIR/genesis/SKILL.md"
 done
 
-# ── 4. Export the kit root so scaffold.sh / graphizer are findable ──────────────────────────────
-SHELL_RC="$HOME/.zshrc"; [[ "${SHELL:-}" == *bash* ]] && SHELL_RC="$HOME/.bashrc"
-LINE="export GENESIS_KIT_ROOT=\"$KIT_DIR\""
-grep -qsF "$LINE" "$SHELL_RC" 2>/dev/null || { echo "$LINE" >> "$SHELL_RC"; echo "✅ set GENESIS_KIT_ROOT in $SHELL_RC"; }
+BIN_DIR="${GENESIS_BIN_DIR:-$HOME/.local/bin}"
+BIN="$BIN_DIR/genesis"
+mkdir -p "$BIN_DIR"
+if [[ -e "$BIN" && ! -L "$BIN" ]]; then
+  echo "Refusing to replace existing file: $BIN" >&2
+  exit 1
+fi
+if [[ -L "$BIN" && "$(readlink "$BIN")" != "$KIT_DIR/tools/genesis.mjs" ]]; then
+  echo "Refusing to replace existing link: $BIN" >&2
+  exit 1
+fi
+ln -sfn "$KIT_DIR/tools/genesis.mjs" "$BIN"
 
-cat <<EOF
-
-────────────────────────────────────────────────────────
-✅ Genesis kit installed.
-
-Start a project in any agent:
-  1.  cd <your-project>
-  2.  "$KIT_DIR/tools/scaffold.sh" .
-        ↳ will ask: cheap/driver model, flagship/checker model,
-          router skill, token budget, max loop iterations, explain-diff (default off).
-          Press Enter to accept the defaults.
-  3.  node "$KIT_DIR/tools/graphizer.mjs" . --write   # builds context-graph
-  4.  invoke the 'genesis' skill and run G0–G6 (see .genesis/genesis.md)
-
-  Non-interactive (CI / onboarding scripts):
-    scaffold.sh . --cheap-model claude-haiku-4-5 \\
-                  --flagship-model claude-opus-4-5 \\
-                  --router-skill coding-orchestrator \\
-                  --budget 50000 --max-iters 10 \\
-                  --explain-diff off
-
-Restart your shell (or: source $SHELL_RC) so GENESIS_KIT_ROOT is set.
-────────────────────────────────────────────────────────
-EOF
+echo "Genesis installed offline."
+echo "  CLI: $BIN"
+echo "  Skills: $HOME/.codex/skills/genesis and $HOME/.claude/skills/genesis"
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+  echo "  Add $BIN_DIR to PATH, or invoke $BIN directly."
+fi
