@@ -93,6 +93,29 @@ test('medium-risk tasks require independent human-reviewed evidence', () => {
   run(['task', 'complete', repo, '--id', 'T-2']);
 });
 
+test('pause blocks task work until an explicit control resume', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['task', 'add', repo, '--id', 'T-pause', '--outcome', 'Respect operator control', '--gate', 'tests:node -e "process.exit(0)"']);
+  run(['control', 'pause', repo, 'T-pause', '--human', 'operator', '--reason', 'hold']);
+  run(['gate', repo, 'T-pause'], { ok: false });
+  run(['task', 'set', repo, '--id', 'T-pause', '--next', 'This must not land'], { ok: false });
+  assert.notEqual(state(repo).tasks[0].next_action, 'This must not land');
+  run(['control', 'resume', repo, 'T-pause', '--human', 'operator']);
+  run(['gate', repo, 'T-pause']);
+});
+
+test('unsafe identifiers and invalid profiles fail before writing paths', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--profile', 'anything-goes'], { ok: false });
+  assert.equal(existsSync(join(repo, '.genesis')), false);
+  run(['init', repo]);
+  run(['task', 'add', repo, '--id', '../escape', '--outcome', 'Nope'], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-safe', '--outcome', 'Safe', '--gate', '../proof:node -e "process.exit(0)"'], { ok: false });
+  assert.equal(state(repo).tasks.length, 0);
+  assert.equal(existsSync(join(repo, 'escape-tests.json')), false);
+});
+
 test('local traces redact credentials and are ignored by git', () => {
   const repo = tempRepo();
   run(['init', repo]);

@@ -26,6 +26,8 @@ test('dry-run emits deterministic qualified graph without writing', () => {
   assert(graph.nodes.some(({id}) => id === 'file:src/one/index.ts'));
   assert(graph.nodes.some(({id}) => id === 'file:src/two/index.ts'));
   assert(graph.nodes.some(({id}) => id === 'package:npm:left-pad'));
+  assert(graph.nodes.some(({id}) => id === 'runtime:python:json'));
+  assert(!graph.nodes.some(({id}) => id === 'package:pypi:json'));
   assert(graph.nodes.some(({id}) => id.startsWith('unresolved:src/broken.js:')));
   assert(graph.nodes.some(({id,provenance}) => id === 'symbol:python/pkg/worker.py#class:Worker' && provenance.extractor === 'python-stdlib-ast'));
   assert(graph.nodes.some(({id}) => id === 'symbol:python/pkg/worker.py#function:Worker.work'));

@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync,
-  statSync, writeFileSync,
+  lstatSync, statSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,8 @@ const SCHEMA_VERSION = 2;
 const RISK = new Set(['low', 'medium', 'high', 'critical']);
 const TASK_STATES = new Set(['queued', 'active', 'paused', 'blocked', 'failed', 'verified', 'done', 'rejected']);
 const CONTROL_ACTIONS = new Set(['approve', 'reject', 'pause', 'resume', 'retry', 'requeue', 'rollback']);
-const GENERATED = new Set(['KICKOFF.md', 'dashboard.html']);
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const PROFILES = new Set(['prototype', 'production', 'regulated']);
 
 function fail(message, code = 1) {
   console.error(`genesis: ${message}`);
@@ -104,7 +105,8 @@ function listFiles(root, { includeGenesis = false } = {}) {
       if (!includeGenesis && name === '.genesis') continue;
       const path = join(dir, name);
       let stat;
-      try { stat = statSync(path); } catch { continue; }
+      try { stat = lstatSync(path); } catch { continue; }
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) walk(path);
       else if (stat.isFile()) files.push(path);
     }
@@ -142,7 +144,7 @@ function redactText(value) {
   return String(value)
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
     .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
-    .replace(/\b(api[_-]?key|token|password|secret|authorization)\b\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]');
+    .replace(/(["']?\b(?:api[_-]?key|token|password|secret|authorization)\b["']?\s*[:=]\s*["']?)([^\s,;"']+)/gi, '$1[REDACTED]');
 }
 
 function redact(value, key = '') {
@@ -203,12 +205,14 @@ function discover(repo) {
 
 function newState(repo, options, mode, discovery = null) {
   const timestamp = now();
+  const profile = options.profile === true || !options.profile ? 'prototype' : options.profile;
+  if (!PROFILES.has(profile)) throw new Error(`invalid profile: ${profile}`);
   return {
     schema_version: SCHEMA_VERSION,
     project: {
       name: options.name === true || !options.name ? basename(repo) : options.name,
       mode,
-      profile: options.profile === true || !options.profile ? 'prototype' : options.profile,
+      profile,
       objective: options.objective === true || !options.objective ? 'Define the project objective.' : options.objective,
       constraints: values(options.constraint),
       non_goals: values(options['non-goal']),
@@ -262,8 +266,8 @@ function saveState(repo, state, event, data = {}) {
 
 function seed(repo, options, mode, discovery = null) {
   if (existsSync(genesisDir(repo))) throw new Error(`${genesisDir(repo)} already exists; refusing to overwrite`);
-  mkdirSync(genesisDir(repo), { recursive: true });
   const state = newState(repo, options, mode, discovery);
+  mkdirSync(genesisDir(repo), { recursive: true });
   saveState(repo, state, `project.${mode}`, { project: state.project.name });
   return state;
 }
@@ -361,9 +365,9 @@ function renderDashboard(repo, state) {
   atomicWrite(join(genesisDir(repo), 'dashboard.html'), page);
 }
 
-function runGraphizer(repo) {
+function runGraphizer(repo, options = []) {
   const graphizer = join(dirname(fileURLToPath(import.meta.url)), 'graphizer.mjs');
-  const result = spawnSync(process.execPath, [graphizer, repo, '--write'], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [graphizer, repo, '--write', ...options], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr.trim() || 'graph indexing failed');
   return result.stderr.trim();
 }
@@ -440,7 +444,9 @@ function commandTrace(parsed) {
 function parseGate(spec) {
   const index = spec.indexOf(':');
   if (index < 1) throw new Error(`gate must be id:command, got ${spec}`);
-  return { id: spec.slice(0, index), command: spec.slice(index + 1), mandatory: true, status: 'pending', evidence: null };
+  const id = spec.slice(0, index);
+  if (!SAFE_ID.test(id)) throw new Error(`unsafe gate id: ${id}`);
+  return { id, command: spec.slice(index + 1), mandatory: true, status: 'pending', evidence: null };
 }
 
 function commandTask(parsed, raw) {
@@ -450,7 +456,7 @@ function commandTask(parsed, raw) {
   const state = loadState(repo);
   if (action === 'add') {
     const id = nested.options.id === true || !nested.options.id ? nested.positional[1] : nested.options.id;
-    if (!id || state.tasks.some((task) => task.id === id)) throw new Error('task add requires a unique --id');
+    if (!id || !SAFE_ID.test(id) || state.tasks.some((task) => task.id === id)) throw new Error('task add requires a unique safe --id');
     const risk = nested.options.risk === true || !nested.options.risk ? 'low' : nested.options.risk;
     if (!RISK.has(risk)) throw new Error(`invalid risk: ${risk}`);
     const task = {
@@ -476,6 +482,7 @@ function commandTask(parsed, raw) {
   const id = nested.options.id === true || !nested.options.id ? nested.positional[1] : nested.options.id;
   const task = state.tasks.find((item) => item.id === id);
   if (!task) throw new Error(`unknown task: ${id}`);
+  if (task.state === 'paused') throw new Error(`${id} is paused; resume it through genesis control before mutation`);
   if (action === 'set') {
     if (nested.options.state && nested.options.state !== true) {
       if (!TASK_STATES.has(nested.options.state)) throw new Error(`invalid task state: ${nested.options.state}`);
@@ -529,6 +536,7 @@ function commandRecord(parsed, raw) {
   const repo = resolve(nested.positional[0] || '.');
   const state = loadState(repo);
   const id = nested.options.id === true || !nested.options.id ? `${type.toUpperCase()}-${randomUUID().slice(0, 8)}` : nested.options.id;
+  if (!SAFE_ID.test(id)) throw new Error(`unsafe record id: ${id}`);
   if (type === 'knowledge') {
     if (!nested.options.title || nested.options.title === true || !nested.options.text || nested.options.text === true) throw new Error('knowledge requires --title and --text');
     state.knowledge.push({ id, title: nested.options.title, text: nested.options.text, source: nested.options.source || null, tags: values(nested.options.tag), recorded_at: now() });
@@ -552,6 +560,7 @@ function commandGate(parsed) {
   const id = parsed.positional[1] || state.lifecycle.active_task;
   const task = state.tasks.find((item) => item.id === id);
   if (!task) throw new Error(`unknown task: ${id || '<none>'}`);
+  if (task.state === 'paused') throw new Error(`${id} is paused; resume it before running gates`);
   if (!task.gates.length) throw new Error(`${id} has no gates`);
   let failed = false;
   for (const gate of task.gates) {
@@ -621,6 +630,7 @@ function commandLearn(parsed, raw) {
       rule: nested.options.rule, rationale: nested.options.rationale || '', regression: nested.options.regression || '',
       rollback: nested.options.rollback || '', status: 'proposed', created_at: now(), approved_by: null,
     };
+    if (!SAFE_ID.test(proposal.id) || state.learning_proposals.some((item) => item.id === proposal.id)) throw new Error('learning proposal requires a unique safe id');
     state.learning_proposals.push(proposal);
     saveState(repo, state, 'learning.proposed', { id: proposal.id, rule: proposal.rule });
     console.log(`Proposed ${proposal.id}`);
@@ -716,7 +726,7 @@ async function main(raw) {
   if (command === 'learn') return commandLearn(parsed, raw);
   if (command === 'cleanup') return commandCleanup(parsed);
   if (command === 'migrate') return commandMigrate(parsed);
-  if (command === 'index') return runGraphizer(resolve(parsed.positional[0] || '.')) && console.log('Indexed repository');
+  if (command === 'index') return runGraphizer(resolve(parsed.positional[0] || '.'), raw.slice(2)) && console.log('Indexed repository');
   throw new Error(`unknown command: ${command}`);
 }
 
