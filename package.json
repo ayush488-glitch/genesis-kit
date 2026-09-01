@@ -1,0 +1,16 @@
+{
+  "name": "genesis-harness",
+  "version": "2.0.0",
+  "description": "Repository-native human-AI development harness",
+  "type": "module",
+  "bin": {
+    "genesis": "tools/genesis.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
