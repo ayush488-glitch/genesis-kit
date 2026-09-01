@@ -28,6 +28,14 @@ Create one bounded task. Every mandatory check must pass against the current sou
 
 Use `genesis record knowledge|decision|assumption|invariant` for durable context and provenance. Do not leave a binding decision or discovered constraint only in chat.
 
+Decision and knowledge records require `--title` and `--text`; assumptions and invariants require `--text`. Add `--source` whenever provenance is known.
+
+Non-low-risk tasks automatically receive an `independent-review` gate. A separate human approves it only after checking the diff and proof:
+
+```bash
+genesis control approve <repo> <task-id> --gate independent-review --human <name> --reason "..."
+```
+
 Checkpoint before handing off:
 
 ```bash

@@ -459,12 +459,16 @@ function commandTask(parsed, raw) {
     if (!id || !SAFE_ID.test(id) || state.tasks.some((task) => task.id === id)) throw new Error('task add requires a unique safe --id');
     const risk = nested.options.risk === true || !nested.options.risk ? 'low' : nested.options.risk;
     if (!RISK.has(risk)) throw new Error(`invalid risk: ${risk}`);
+    const gates = values(nested.options.gate).map(parseGate);
+    if (risk !== 'low' && !gates.some((gate) => gate.id === 'independent-review')) {
+      gates.push({ id: 'independent-review', command: '', mandatory: true, status: 'pending', evidence: null });
+    }
     const task = {
       id,
       outcome: nested.options.outcome === true || !nested.options.outcome ? 'Define the task outcome.' : nested.options.outcome,
       state: 'queued', risk, owner: nested.options.owner || null,
       scope: values(nested.options.scope), dependencies: values(nested.options.depends),
-      gates: values(nested.options.gate).map(parseGate),
+      gates,
       next_action: nested.options.next === true || !nested.options.next ? 'Run the task pre-flight.' : nested.options.next,
       blocker: null, notes: [], failures: [], limitations: [], created_at: now(), updated_at: now(),
     };
@@ -594,6 +598,7 @@ function commandControl(parsed, raw) {
   const id = nested.positional[1] || state.lifecycle.active_task;
   const task = state.tasks.find((item) => item.id === id);
   if (!task) throw new Error(`unknown task: ${id || '<none>'}`);
+  if (action === 'approve' && (!nested.options.gate || nested.options.gate === true)) throw new Error('approve requires --gate');
   const record = { id: randomUUID(), at: now(), action, task: id, human: nested.options.human || null, reason: nested.options.reason || null, revision: nested.options.revision || null };
   if (action === 'approve' && nested.options.gate && nested.options.gate !== true) {
     if (!record.human) throw new Error('manual gate approval requires --human');
@@ -701,11 +706,13 @@ Usage:
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
-  genesis record <knowledge|decision|assumption|invariant> <repo> ...
+  genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
+  genesis record assumption|invariant <repo> --text TEXT [--source REF]
   genesis task add <repo> --id ID --outcome TEXT [--risk low] [--gate id:command]
   genesis task set|complete <repo> --id ID
   genesis gate <repo> [task-id]
-  genesis control <approve|reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
+  genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
+  genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
   genesis learn propose|approve <repo> ...
   genesis migrate <repo> [--write]
 `);

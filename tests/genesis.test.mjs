@@ -85,9 +85,11 @@ test('gate proof fails closed, records provenance, and becomes stale after sourc
 test('medium-risk tasks require independent human-reviewed evidence', () => {
   const repo = tempRepo();
   run(['init', repo]);
-  run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--owner', 'maker', '--outcome', 'Risky thing', '--gate', 'tests:node -e "process.exit(0)"', '--gate', 'independent-review:']);
+  run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--owner', 'maker', '--outcome', 'Risky thing', '--gate', 'tests:node -e "process.exit(0)"']);
+  assert.equal(state(repo).tasks[0].gates.some((gate) => gate.id === 'independent-review'), true);
   run(['gate', repo, 'T-2']);
   run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
+  run(['control', 'approve', repo, 'T-2', '--human', 'reviewer'], { ok: false });
   run(['control', 'approve', repo, 'T-2', '--gate', 'tests', '--human', 'reviewer'], { ok: false });
   run(['control', 'approve', repo, 'T-2', '--gate', 'independent-review'], { ok: false });
   run(['control', 'approve', repo, 'T-2', '--gate', 'independent-review', '--human', 'maker'], { ok: false });

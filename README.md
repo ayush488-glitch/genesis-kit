@@ -56,14 +56,14 @@ genesis record assumption . --text "The first release runs on Node 18+"
 genesis record invariant . --text "Mandatory proof must match current sources"
 genesis record knowledge . --title "Authentication boundary" \
   --text "The API validates tenant ownership" --source docs/security.md
-genesis task add . --id T-1 --outcome "Add the first proven slice" \
+genesis task add . --id T-1 --risk medium --outcome "Add the first proven slice" \
   --gate 'tests:npm test'
 genesis gate . T-1
 genesis task complete . --id T-1
 genesis checkpoint .
 ```
 
-A mandatory gate passes only when its evidence passed against the current source hash. Missing, failed, pending, skipped, or stale evidence blocks completion. Medium, high, and critical work also needs an independently approved review gate.
+A mandatory gate passes only when its evidence passed against the current source hash. Missing, failed, pending, skipped, or stale evidence blocks completion. Medium, high, and critical tasks automatically receive a manual `independent-review` gate.
 
 Useful commands:
 
