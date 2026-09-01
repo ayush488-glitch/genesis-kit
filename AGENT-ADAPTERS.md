@@ -6,6 +6,7 @@ Genesis state is agent-agnostic. Codex and Claude Code use the same repository c
 |---|---|---|
 | Load policy | invoke installed `ponytail` and `genesis` skills | invoke installed `ponytail` and `genesis` skills |
 | Resume | read `.genesis/KICKOFF.md` | read `.genesis/KICKOFF.md` |
+| Connect repository | `genesis agent connect . --codex --write` | `genesis agent connect . --claude --write` |
 | Run Genesis | `genesis …` or `node <kit>/tools/genesis.mjs …` | `genesis …` or `node <kit>/tools/genesis.mjs …` |
 | Independent check | fresh context or another agent; record human approval for manual proof | fresh context or another agent; record human approval for manual proof |
 | Parallel writing | isolated git worktree with declared file ownership | isolated git worktree with declared file ownership |
