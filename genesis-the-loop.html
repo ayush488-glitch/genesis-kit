@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Genesis is a repository-native software factory for human–AI development.">
+  <title>Genesis — Software Factory</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090b10;--panel:#11151d;--line:#283040;--text:#f4f6fa;--muted:#9ca8ba;--lime:#b8ff5c;--blue:#78a9ff;--orange:#ffb86b}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 80% 0,#152139 0,transparent 34rem),var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    main,footer{width:min(1120px,calc(100% - 2rem));margin:auto}nav{display:flex;align-items:center;justify-content:space-between;padding:1.25rem 0}.brand{font-weight:850;letter-spacing:.08em;text-transform:uppercase}.status{border:1px solid #36531e;background:#18240f;color:var(--lime);border-radius:999px;padding:.3rem .7rem;font-size:.78rem;font-weight:750}
+    .hero{padding:7rem 0 5rem;display:grid;grid-template-columns:1.25fr .75fr;gap:3rem;align-items:end}.eyebrow{color:var(--lime);font-size:.8rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase}h1{font-size:clamp(3.2rem,8vw,7rem);line-height:.88;letter-spacing:-.07em;margin:.6rem 0 1.5rem;max-width:850px}.lead{color:var(--muted);font-size:clamp(1.05rem,2vw,1.35rem);max-width:710px}.terminal{background:#06080c;border:1px solid var(--line);border-radius:18px;padding:1.2rem;box-shadow:0 30px 80px #0008;overflow:auto}.terminal:before{content:"●  ●  ●";display:block;color:#566176;letter-spacing:.3em;margin-bottom:1rem}.terminal code{white-space:pre;color:#dbe5f6;font:13px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace}.prompt{color:var(--lime)}
+    section{padding:4rem 0}.section-label{color:var(--blue);font-size:.78rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}h2{font-size:clamp(2rem,5vw,4rem);letter-spacing:-.045em;line-height:1;margin:.6rem 0 2rem}.flow,.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:.8rem}.step,.card{border:1px solid var(--line);background:linear-gradient(145deg,#141923,#0d1118);border-radius:16px;padding:1.2rem;min-height:150px}.step b{color:var(--lime);font-size:.74rem}.step h3,.card h3{margin:.5rem 0;font-size:1rem}.step p,.card p{color:var(--muted);font-size:.9rem;margin:0}.grid{grid-template-columns:repeat(3,1fr)}.card{min-height:180px}.card:nth-child(2) h3{color:var(--blue)}.card:nth-child(3) h3{color:var(--orange)}
+    .contract{display:grid;grid-template-columns:1fr 1fr;gap:2rem;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.rules{list-style:none;padding:0;margin:0}.rules li{padding:.85rem 0;border-bottom:1px solid #202633;color:var(--muted)}.rules li:before{content:"→";color:var(--lime);margin-right:.75rem}.rules li:last-child{border:0}
+    footer{padding:3rem 0 5rem;color:var(--muted);display:flex;justify-content:space-between;border-top:1px solid var(--line)}a{color:var(--text)}
+    @media(max-width:850px){.hero,.contract{grid-template-columns:1fr}.hero{padding-top:4rem}.flow{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.step{min-height:120px}}
+    @media(max-width:520px){.flow{grid-template-columns:1fr}h1{font-size:3.4rem}footer{display:block}}
+  </style>
+</head>
+<body>
+  <main>
+    <nav><div class="brand">Genesis</div><div class="status">v2 · local first</div></nav>
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Human × AI software factory</div>
+        <h1>Build with memory. Ship with proof.</h1>
+        <p class="lead">Genesis turns any repository into a durable, inspectable development environment—from specification and research to implementation, verification, and the next cold session.</p>
+      </div>
+      <div class="terminal"><code><span class="prompt">$</span> genesis adopt ./project
+review the discovery report
+
+<span class="prompt">$</span> genesis adopt ./project --write
+state → task → proof → checkpoint</code></div>
+    </header>
+
+    <section>
+      <div class="section-label">The operating loop</div>
+      <h2>One path from intent to evidence.</h2>
+      <div class="flow">
+        <article class="step"><b>01</b><h3>Specify</h3><p>Capture the objective, constraints, assumptions, and accepted decisions.</p></article>
+        <article class="step"><b>02</b><h3>Index</h3><p>Map files, symbols, imports, packages, and unresolved relationships.</p></article>
+        <article class="step"><b>03</b><h3>Build</h3><p>Work on one bounded outcome with explicit scope and risk.</p></article>
+        <article class="step"><b>04</b><h3>Prove</h3><p>Bind executable evidence and independent review to current sources.</p></article>
+        <article class="step"><b>05</b><h3>Resume</h3><p>Generate the exact state, blocker, evidence, and next action.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-label">Factory surfaces</div>
+      <h2>Small system. Complete trace.</h2>
+      <div class="grid">
+        <article class="card"><h3>Repository memory</h3><p>A single canonical JSON ledger preserves tasks, decisions, assumptions, invariants, evidence, failures, and durable knowledge.</p></article>
+        <article class="card"><h3>Graphical code index</h3><p>Deterministic JSON, DOT, and searchable HTML views use qualified identities and honest confidence metadata.</p></article>
+        <article class="card"><h3>Human control</h3><p>Pause, resume, reject, requeue, review, and rollback requests become auditable events. Learned rules never promote themselves.</p></article>
+        <article class="card"><h3>Cold-session handoff</h3><p>KICKOFF.md lets another human or agent continue without replaying old chats or reading the whole repository.</p></article>
+        <article class="card"><h3>Fail-closed proof</h3><p>Missing, failed, pending, or stale mandatory evidence blocks completion. Medium-risk work adds independent review automatically.</p></article>
+        <article class="card"><h3>Local observability</h3><p>A generated dashboard shows current work and redacted traces while raw events remain local and git-ignored.</p></article>
+      </div>
+    </section>
+
+    <section class="contract">
+      <div><div class="section-label">Default policy</div><h2>Ponytail, full.</h2><p class="lead">The factory prefers the standard library, reuses what exists, and creates only what the current evidence requires.</p></div>
+      <ul class="rules">
+        <li>One operational source of truth</li>
+        <li>Zero runtime package dependencies</li>
+        <li>No silent code deletion or rule promotion</li>
+        <li>No fake semantic or runtime claims</li>
+        <li>No prior conversation required to resume</li>
+      </ul>
+    </section>
+  </main>
+  <footer><span>Genesis · agent-agnostic development harness</span><span>Node.js 18+ · offline</span></footer>
+</body>
+</html>
