@@ -190,7 +190,7 @@ test('new-product workflow blocks implementation until an approved specification
   const repo = tempRepo();
   run(['init', repo, '--workflow', 'new-product', '--objective', 'Build a clinic scheduler']);
   let project = state(repo);
-  assert.equal(project.workflow.phase, 'discovery');
+  assert.equal(project.lifecycle.phase, 'discovery');
   assert.equal(project.lifecycle.active_task, 'SPEC-1');
   assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /Do not write product implementation code/);
   assert.ok(existsSync(join(repo, 'SPEC.md')));
@@ -219,12 +219,13 @@ Clinic staff.
 - None.
 `);
   run(['spec', 'check', repo]);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /Present the checked SPEC\.md.*Do not write product implementation code/);
   writeFileSync(join(repo, 'SPEC.md'), `${readFileSync(join(repo, 'SPEC.md'), 'utf8')}\n<!-- clarification -->\n`);
   run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'reviewed'], { ok: false });
   run(['spec', 'check', repo]);
   run(['spec', 'approve', repo, '--human', 'owner'], { ok: false });
   run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'requirements reviewed']);
-  assert.equal(state(repo).workflow.phase, 'planning');
+  assert.equal(state(repo).lifecycle.phase, 'planning');
 
   run(['task', 'add', repo, '--id', 'T-missing', '--outcome', 'Missing traceability', '--gate', 'tests:node -e "process.exit(0)"'], { ok: false });
   run(['task', 'add', repo, '--id', 'T-unknown', '--outcome', 'Unknown traceability', '--requirement', 'FR-99', '--gate', 'tests:node -e "process.exit(0)"'], { ok: false });
@@ -235,9 +236,17 @@ Clinic staff.
   run(['plan', 'approve', repo, '--human', 'owner'], { ok: false });
   run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed']);
   project = state(repo);
-  assert.equal(project.workflow.phase, 'build');
+  assert.equal(project.lifecycle.phase, 'build');
   assert.equal(project.lifecycle.active_task, 'T-1');
   assert.match(readFileSync(join(repo, '.genesis', 'PLAN.md'), 'utf8'), /FR-1, NFR-1, AC-1/);
+  run(['task', 'add', repo, '--id', 'T-late', '--outcome', 'Bypass approval', '--requirement', 'FR-1', '--gate', 'tests:node -e "process.exit(0)"'], { ok: false });
+  run(['plan', 'reopen', repo, '--human', 'owner', '--reason', 'too soon'], { ok: false });
+  run(['gate', repo, 'T-1']);
+  run(['control', 'approve', repo, 'T-1', '--gate', 'independent-review', '--human', 'reviewer', '--reason', 'reviewed']);
+  run(['task', 'complete', repo, '--id', 'T-1']);
+  run(['plan', 'reopen', repo, '--human', 'owner', '--reason', 'Add the next approved slice']);
+  run(['task', 'add', repo, '--id', 'T-2', '--outcome', 'Continue the product', '--requirement', 'FR-1', '--requirement', 'NFR-1', '--requirement', 'AC-1', '--gate', 'tests:node -e "process.exit(0)"']);
+  assert.equal(state(repo).lifecycle.phase, 'planning');
 });
 
 test('specification changes stale approval and agent connection preserves repository instructions', () => {
@@ -295,7 +304,6 @@ test('an existing task-only Genesis project can start specification explicitly',
   const projectPath = join(repo, '.genesis', 'project.json');
   const legacyV2 = JSON.parse(readFileSync(projectPath, 'utf8'));
   delete legacyV2.artifacts;
-  delete legacyV2.agent_connections;
   writeFileSync(projectPath, `${JSON.stringify(legacyV2, null, 2)}\n`);
   run(['spec', 'start', repo]);
   assert.equal(state(repo).workflow.type, 'new-product');

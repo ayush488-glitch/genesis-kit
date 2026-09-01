@@ -141,6 +141,7 @@ genesis migrate . --write
 genesis workflow status .               # current workflow and phase
 genesis spec status .                   # draft, checked, approved, or stale
 genesis plan status .                   # traceability and approval state
+genesis plan reopen . --human NAME --reason "Scope changed"  # reopen after active work ends
 genesis index .                         # refresh the graphical code index
 genesis dashboard .                     # regenerate the local control view
 genesis trace . --event work.started    # append a redacted local trace
