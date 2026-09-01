@@ -27,5 +27,6 @@ test('installer is offline, idempotent, and installs both agent skills', () => {
   assert.ok(existsSync(join(home, '.codex', 'skills', 'genesis', 'SKILL.md')));
   assert.ok(existsSync(join(home, '.claude', 'skills', 'genesis', 'SKILL.md')));
   assert.ok(lstatSync(join(bin, 'genesis')).isSymbolicLink());
-  assert.match(execFileSync(join(bin, 'genesis'), ['--help'], { encoding: 'utf8' }), /Genesis software-factory CLI/);
+  assert.match(execFileSync(join(bin, 'genesis'), ['--help'], { encoding: 'utf8' }), /genesis spec start\|status\|check/);
+  assert.match(readFileSync(join(home, '.codex', 'skills', 'genesis', 'SKILL.md'), 'utf8'), /New-product workflow/);
 });

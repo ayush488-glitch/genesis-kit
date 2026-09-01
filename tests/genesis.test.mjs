@@ -185,3 +185,121 @@ test('cold-session state is reconstructable by a second process', () => {
   const second = run(['status', repo, '--json']);
   assert.equal(JSON.parse(second.stdout).lifecycle.active_task, 'T-3');
 });
+
+test('new-product workflow blocks implementation until an approved specification and plan', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--workflow', 'new-product', '--objective', 'Build a clinic scheduler']);
+  let project = state(repo);
+  assert.equal(project.workflow.phase, 'discovery');
+  assert.equal(project.lifecycle.active_task, 'SPEC-1');
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /Do not write product implementation code/);
+  assert.ok(existsSync(join(repo, 'SPEC.md')));
+  run(['task', 'add', repo, '--id', 'T-early', '--outcome', 'Code too soon'], { ok: false });
+  run(['spec', 'check', repo], { ok: false });
+
+  writeFileSync(join(repo, 'SPEC.md'), `# Product specification
+
+## Problem
+Clinics need conflict-free scheduling.
+## Users
+Clinic staff.
+## Functional requirements
+- FR-1: Staff can create appointments.
+## Non-functional requirements
+- NFR-1: Tenant data remains isolated.
+## Constraints
+- Node.js 18+.
+## Non-goals
+- Patient self-service.
+## Acceptance criteria
+- AC-1: An integration test creates an appointment.
+## Risks
+- Incorrect tenant boundaries.
+## Open questions
+- None.
+`);
+  run(['spec', 'check', repo]);
+  writeFileSync(join(repo, 'SPEC.md'), `${readFileSync(join(repo, 'SPEC.md'), 'utf8')}\n<!-- clarification -->\n`);
+  run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'reviewed'], { ok: false });
+  run(['spec', 'check', repo]);
+  run(['spec', 'approve', repo, '--human', 'owner'], { ok: false });
+  run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'requirements reviewed']);
+  assert.equal(state(repo).workflow.phase, 'planning');
+
+  run(['task', 'add', repo, '--id', 'T-missing', '--outcome', 'Missing traceability', '--gate', 'tests:node -e "process.exit(0)"'], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-unknown', '--outcome', 'Unknown traceability', '--requirement', 'FR-99', '--gate', 'tests:node -e "process.exit(0)"'], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-1', '--outcome', 'Create appointments safely', '--risk', 'medium', '--requirement', 'FR-1', '--requirement', 'NFR-1', '--requirement', 'AC-1', '--gate', 'tests:node -e "process.exit(0)"']);
+  assert.equal(state(repo).tasks.find((task) => task.id === 'T-1').state, 'queued');
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed'], { ok: false });
+  run(['plan', 'check', repo]);
+  run(['plan', 'approve', repo, '--human', 'owner'], { ok: false });
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed']);
+  project = state(repo);
+  assert.equal(project.workflow.phase, 'build');
+  assert.equal(project.lifecycle.active_task, 'T-1');
+  assert.match(readFileSync(join(repo, '.genesis', 'PLAN.md'), 'utf8'), /FR-1, NFR-1, AC-1/);
+});
+
+test('specification changes stale approval and agent connection preserves repository instructions', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--workflow', 'new-product', '--objective', 'Build one thing']);
+  writeFileSync(join(repo, 'SPEC.md'), `# Spec
+## Problem
+One problem.
+## Users
+One user.
+## Functional requirements
+- FR-1: One feature.
+## Non-functional requirements
+- NFR-1: One quality.
+## Constraints
+- Local.
+## Non-goals
+- Everything else.
+## Acceptance criteria
+- AC-1: One proof.
+## Risks
+- One risk.
+## Open questions
+- None.
+`);
+  run(['spec', 'check', repo]);
+  run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'reviewed']);
+  writeFileSync(join(repo, 'SPEC.md'), `${readFileSync(join(repo, 'SPEC.md'), 'utf8')}\nChanged after approval.\n`);
+  assert.equal(JSON.parse(run(['spec', 'status', repo]).stdout).status, 'stale');
+  run(['plan', 'check', repo], { ok: false });
+
+  writeFileSync(join(repo, 'AGENTS.md'), '# Existing instructions\n');
+  const dry = JSON.parse(run(['agent', 'connect', repo]).stdout);
+  assert.equal(dry.dry_run, true);
+  assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
+  run(['agent', 'connect', repo, '--write']);
+  run(['agent', 'connect', repo, '--write']);
+  const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /# Existing instructions/);
+  assert.equal((agents.match(/<!-- genesis:start -->/g) || []).length, 1);
+  assert.match(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /\.genesis\/KICKOFF\.md/);
+});
+
+test('workflow init refuses an existing specification without leaving partial state', () => {
+  const repo = tempRepo();
+  writeFileSync(join(repo, 'SPEC.md'), '# Existing spec\n');
+  run(['init', repo, '--workflow', 'new-product'], { ok: false });
+  assert.equal(existsSync(join(repo, '.genesis')), false);
+  assert.equal(readFileSync(join(repo, 'SPEC.md'), 'utf8'), '# Existing spec\n');
+});
+
+test('an existing task-only Genesis project can start specification explicitly', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--objective', 'Start plain, specify later']);
+  const projectPath = join(repo, '.genesis', 'project.json');
+  const legacyV2 = JSON.parse(readFileSync(projectPath, 'utf8'));
+  delete legacyV2.artifacts;
+  delete legacyV2.agent_connections;
+  writeFileSync(projectPath, `${JSON.stringify(legacyV2, null, 2)}\n`);
+  run(['spec', 'start', repo]);
+  assert.equal(state(repo).workflow.type, 'new-product');
+  run(['agent', 'connect', repo, '--codex', '--write']);
+  assert.ok(existsSync(join(repo, 'AGENTS.md')));
+  assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
+});

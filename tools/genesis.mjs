@@ -15,6 +15,8 @@ const TASK_STATES = new Set(['queued', 'active', 'paused', 'blocked', 'failed', 
 const CONTROL_ACTIONS = new Set(['approve', 'reject', 'pause', 'resume', 'retry', 'requeue', 'rollback']);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const PROFILES = new Set(['prototype', 'production', 'regulated']);
+const WORKFLOWS = new Set(['new-product']);
+const SPEC_SECTIONS = ['Problem', 'Users', 'Functional requirements', 'Non-functional requirements', 'Constraints', 'Non-goals', 'Acceptance criteria', 'Risks', 'Open questions'];
 
 function fail(message, code = 1) {
   console.error(`genesis: ${message}`);
@@ -81,6 +83,8 @@ function loadState(repo) {
   const path = statePath(repo);
   if (!existsSync(path)) throw new Error(`no Genesis v2 state at ${path}; run init, adopt --write, or migrate --write`);
   const state = readJson(path);
+  state.artifacts ||= [];
+  state.agent_connections ||= [];
   validateState(state);
   return state;
 }
@@ -89,6 +93,7 @@ function validateState(state) {
   if (state.schema_version !== SCHEMA_VERSION) throw new Error(`unsupported schema_version ${state.schema_version}`);
   if (!state.project?.name || !state.lifecycle || !Array.isArray(state.tasks)) throw new Error('project state is missing required fields');
   if (state.policy?.ponytail !== 'full') throw new Error('Ponytail full is required by project policy');
+  if (state.workflow && (!WORKFLOWS.has(state.workflow.type) || !Array.isArray(state.artifacts))) throw new Error('invalid workflow state');
   for (const task of state.tasks) {
     if (!task.id || !TASK_STATES.has(task.state) || !RISK.has(task.risk) || !Array.isArray(task.gates)) {
       throw new Error(`invalid task record: ${task.id || '<missing id>'}`);
@@ -138,6 +143,10 @@ function gitInfo(repo) {
 
 function revision(repo) {
   return { ...gitInfo(repo), source_hash: contentHash(repo) };
+}
+
+function fileHash(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 function redactText(value) {
@@ -235,6 +244,9 @@ function newState(repo, options, mode, discovery = null) {
       next_action: mode === 'adopt' ? 'Review the adoption report and confirm project invariants.' : 'Confirm the objective and add the first bounded task.',
     },
     commands: discovery?.commands || {},
+    workflow: null,
+    artifacts: [],
+    agent_connections: [],
     assumptions: [],
     invariants: [],
     decisions: [],
@@ -249,6 +261,68 @@ function newState(repo, options, mode, discovery = null) {
   };
 }
 
+function specTemplate(state) {
+  return `# Product specification — ${state.project.name}
+
+> Status: draft. A coding agent must not implement product code until this specification is approved through Genesis.
+
+## Problem
+
+[Describe the user problem and desired outcome.]
+
+## Users
+
+[Who uses this product and who is affected by it?]
+
+## Functional requirements
+
+- FR-1: [State one observable capability.]
+
+## Non-functional requirements
+
+- NFR-1: [State one measurable quality, security, privacy, performance, or reliability requirement.]
+
+## Constraints
+
+- [List technical, legal, budget, timeline, platform, or trust-boundary constraints.]
+
+## Non-goals
+
+- [State what this release deliberately will not do.]
+
+## Acceptance criteria
+
+- AC-1: [State one binary outcome that can be proven.]
+
+## Risks
+
+- [Identify material risks and mitigations.]
+
+## Open questions
+
+- [List unresolved questions, or write "None".]
+`;
+}
+
+function startNewProduct(repo, state) {
+  if (state.workflow) throw new Error('a workflow is already active');
+  if (state.tasks.some((task) => task.id === 'SPEC-1')) throw new Error('task SPEC-1 already exists; cannot start specification workflow');
+  const path = join(repo, 'SPEC.md');
+  if (existsSync(path)) throw new Error(`${path} already exists; refusing to overwrite`);
+  state.workflow = { type: 'new-product', phase: 'discovery', status: 'active', started_at: now(), spec_check: null, plan_approval: null };
+  state.artifacts.push({ id: 'SPEC-1', type: 'specification', path: 'SPEC.md', status: 'draft', requirements: [], source_hash: null, approval: null });
+  const task = {
+    id: 'SPEC-1', outcome: 'Produce an approved, implementation-ready product specification', state: 'active', risk: 'medium', owner: null,
+    scope: ['SPEC.md'], dependencies: [], requirements: [],
+    gates: [{ id: 'independent-review', command: '', mandatory: true, status: 'pending', evidence: null }],
+    next_action: 'Interview the human, record durable context, and replace every placeholder in SPEC.md.',
+    blocker: null, notes: [], failures: [], limitations: [], created_at: now(), updated_at: now(),
+  };
+  state.tasks.push(task);
+  state.lifecycle = { phase: 'discovery', status: 'active', active_task: 'SPEC-1', blocker: null, next_action: task.next_action };
+  atomicWrite(path, specTemplate(state));
+}
+
 function ensureLocalIgnore(repo) {
   const path = join(genesisDir(repo), 'local', '.gitignore');
   atomicWrite(path, '*\n!.gitignore\n');
@@ -261,13 +335,18 @@ function saveState(repo, state, event, data = {}) {
   ensureLocalIgnore(repo);
   trace(repo, event, data);
   renderKickoff(repo, state);
+  renderPlan(repo, state);
   renderDashboard(repo, state);
 }
 
 function seed(repo, options, mode, discovery = null) {
   if (existsSync(genesisDir(repo))) throw new Error(`${genesisDir(repo)} already exists; refusing to overwrite`);
   const state = newState(repo, options, mode, discovery);
+  const workflow = options.workflow === true ? null : options.workflow;
+  if (workflow && !WORKFLOWS.has(workflow)) throw new Error(`unsupported workflow: ${workflow}`);
+  if (workflow && existsSync(join(repo, 'SPEC.md'))) throw new Error(`${join(repo, 'SPEC.md')} already exists; refusing to overwrite`);
   mkdirSync(genesisDir(repo), { recursive: true });
+  if (workflow) startNewProduct(repo, state);
   saveState(repo, state, `project.${mode}`, { project: state.project.name });
   return state;
 }
@@ -281,8 +360,86 @@ function taskSummary(task, sourceHash) {
   return { ...task, gates: task.gates.map((gate) => freshGate(gate, sourceHash)) };
 }
 
+function specification(repo, state) {
+  const artifact = state.artifacts?.find((item) => item.type === 'specification');
+  if (!artifact) throw new Error('no specification workflow; run genesis spec start <repo>');
+  const path = join(repo, artifact.path);
+  if (!existsSync(path)) throw new Error(`missing specification artifact: ${artifact.path}`);
+  const text = readFileSync(path, 'utf8');
+  const requirements = [...new Set([...text.matchAll(/^\s*-?\s*((?:FR|NFR|AC)-\d+)\s*:/gm)].map((match) => match[1]))].sort();
+  const missing = SPEC_SECTIONS.filter((heading) => !new RegExp(`^## ${heading}$`, 'm').test(text));
+  const placeholders = /\[(?:Describe|Who|State|List|What|Identify)/.test(text);
+  const kinds = ['FR-', 'NFR-', 'AC-'].filter((prefix) => !requirements.some((id) => id.startsWith(prefix)));
+  const problems = [...missing.map((heading) => `missing section: ${heading}`), ...kinds.map((prefix) => `missing requirement: ${prefix}*`)];
+  if (placeholders) problems.push('unresolved template placeholders');
+  return { artifact, path, text, requirements, hash: fileHash(path), problems };
+}
+
+function specStatus(repo, state) {
+  const spec = specification(repo, state);
+  const effective_status = spec.artifact.approval?.source_hash === spec.hash ? spec.artifact.status : spec.artifact.approval ? 'stale' : spec.artifact.status;
+  return { id: spec.artifact.id, path: spec.artifact.path, status: effective_status, requirements: spec.requirements, problems: spec.problems, approval: spec.artifact.approval };
+}
+
+function planProblems(repo, state) {
+  const spec = specStatus(repo, state);
+  const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1');
+  const problems = [];
+  if (spec.status !== 'approved') problems.push(`specification is ${spec.status}`);
+  if (!tasks.length) problems.push('no implementation tasks');
+  const known = new Set(spec.requirements), covered = new Set();
+  for (const task of tasks) {
+    if (!task.requirements?.length) problems.push(`${task.id} has no requirement references`);
+    for (const id of task.requirements || []) {
+      if (!known.has(id)) problems.push(`${task.id} references unknown requirement ${id}`);
+      else covered.add(id);
+    }
+    if (!task.gates.some((gate) => gate.command)) problems.push(`${task.id} has no executable gate`);
+  }
+  for (const id of known) if (!covered.has(id)) problems.push(`${id} is not covered by a task`);
+  return { problems, tasks, requirements: spec.requirements };
+}
+
+function planHash(state) {
+  const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1').map((task) => ({
+    id: task.id, outcome: task.outcome, risk: task.risk, scope: task.scope,
+    requirements: task.requirements || [], gates: task.gates.map((gate) => ({ id: gate.id, command: gate.command, mandatory: gate.mandatory })),
+  }));
+  return createHash('sha256').update(JSON.stringify(tasks)).digest('hex');
+}
+
+function planStatus(repo, state) {
+  const result = planProblems(repo, state), hash = planHash(state);
+  const status = state.workflow.plan_approval?.source_hash === hash ? 'approved' : state.workflow.plan_approval ? 'stale' : state.workflow.plan_check?.source_hash === hash ? 'checked' : 'draft';
+  return { ...result, hash, status };
+}
+
+function workflowInstruction(state) {
+  if (!state.workflow) return 'Work only on the active bounded task.';
+  if (state.workflow.phase === 'discovery') return 'Interview the human and complete SPEC.md. Do not write product implementation code.';
+  if (state.workflow.phase === 'planning') return 'Create requirement-linked implementation tasks with executable gates. Do not write product implementation code.';
+  return 'Implement only the active task and prove it against current sources.';
+}
+
+function renderPlan(repo, state) {
+  if (!state.workflow) return;
+  const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1');
+  const lines = [
+    '# Implementation plan', '', '> Generated from `.genesis/project.json`; do not edit this file.', '',
+    `- workflow: ${state.workflow.type}`, `- phase: ${state.workflow.phase}`, `- plan approval: ${state.workflow.plan_approval ? `${state.workflow.plan_approval.human} at ${state.workflow.plan_approval.at}` : 'pending'}`, '',
+    '## Tasks', '',
+    ...(tasks.length ? tasks.flatMap((task) => [
+      `### ${task.id} — ${task.outcome}`, '', `- state/risk: ${task.state} / ${task.risk}`,
+      `- requirements: ${task.requirements?.join(', ') || 'none'}`, `- scope: ${task.scope.join(', ') || 'not bounded'}`,
+      `- gates: ${task.gates.map((gate) => `${gate.id}: ${gate.command || gate.status}`).join(', ') || 'none'}`, `- next: ${task.next_action}`, '',
+    ]) : ['- No implementation tasks yet.', '']),
+  ];
+  atomicWrite(join(genesisDir(repo), 'PLAN.md'), `${lines.join('\n')}\n`);
+}
+
 function renderKickoff(repo, state) {
   const hash = contentHash(repo);
+  const workflowSpec = state.workflow ? specStatus(repo, state) : null;
   const active = state.tasks.find((task) => task.id === state.lifecycle.active_task) || null;
   const completed = state.tasks.filter((task) => task.state === 'done');
   const activeGates = active?.gates.map((gate) => freshGate(gate, hash)) || [];
@@ -300,12 +457,15 @@ function renderKickoff(repo, state) {
     '',
     `- objective: ${state.project.objective}`,
     `- mode/profile: ${state.project.mode} / ${state.project.profile}`,
+    `- workflow: ${state.workflow ? `${state.workflow.type} / ${state.workflow.phase}` : 'task-only'}`,
     `- phase/status: ${state.lifecycle.phase} / ${state.lifecycle.status}`,
     `- active task: ${active ? `${active.id} — ${active.outcome}` : 'none'}`,
     `- owner: ${active?.owner || 'unassigned'}`,
     `- blocker: ${state.lifecycle.blocker || 'none'}`,
     `- next action: ${state.lifecycle.next_action}`,
     `- source hash: ${hash}`,
+    `- phase instruction: ${workflowInstruction(state)}`,
+    ...(workflowSpec ? [`- specification: ${workflowSpec.path} / ${workflowSpec.status}`, `- requirements: ${workflowSpec.requirements.join(', ') || 'none yet'}`] : []),
     '',
     '## Completed work',
     '',
@@ -330,10 +490,11 @@ function renderKickoff(repo, state) {
     '## Resume',
     '',
     '1. Read this file and the active task in `.genesis/project.json`.',
-    '2. Inspect relevant decisions, graph neighbors, proof, and recent git history only.',
-    '3. Run the baseline command when configured.',
-    '4. Report `state -> evidence -> blocker -> next action` before editing.',
-    '5. End with `genesis checkpoint <repo>`.',
+    '2. Obey the phase instruction; specification and planning phases prohibit product implementation.',
+    '3. Inspect relevant decisions, graph neighbors, proof, and recent git history only.',
+    '4. Run the baseline command when configured.',
+    '5. Report `state -> evidence -> blocker -> next action` before editing.',
+    '6. End with `genesis checkpoint <repo>`.',
     '',
   ];
   atomicWrite(join(genesisDir(repo), 'KICKOFF.md'), `${lines.join('\n')}\n`);
@@ -345,6 +506,8 @@ function html(value) {
 
 function renderDashboard(repo, state) {
   const hash = contentHash(repo);
+  const workflowSpec = state.workflow ? specStatus(repo, state) : null;
+  const workflowPlan = state.workflow ? planStatus(repo, state) : null;
   const tasks = state.tasks.map((task) => taskSummary(task, hash));
   const traces = recentTraces(repo);
   const rows = tasks.map((task) => {
@@ -357,7 +520,8 @@ function renderDashboard(repo, state) {
 <meta http-equiv="refresh" content="5"><title>Genesis — ${html(state.project.name)}</title>
 <style>body{font:15px/1.5 system-ui;margin:2rem;background:#0d1117;color:#e6edf3}main{max-width:1100px;margin:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}.card{border:1px solid #30363d;border-radius:10px;padding:1rem;background:#161b22}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #30363d;padding:.6rem}code{word-break:break-all;color:#79c0ff}.muted{color:#8b949e}</style></head>
 <body><main><h1>${html(state.project.name)}</h1><p class="muted">Generated from project.json · refreshes every 5 seconds</p>
-<section class="grid"><div class="card"><b>Phase</b><div>${html(state.lifecycle.phase)}</div></div><div class="card"><b>Status</b><div>${html(state.lifecycle.status)}</div></div><div class="card"><b>Active task</b><div>${html(state.lifecycle.active_task || 'none')}</div></div><div class="card"><b>Blocker</b><div>${html(state.lifecycle.blocker || 'none')}</div></div></section>
+<section class="grid"><div class="card"><b>Workflow</b><div>${html(state.workflow?.type || 'task-only')}</div></div><div class="card"><b>Phase</b><div>${html(state.lifecycle.phase)}</div></div>${workflowSpec ? `<div class="card"><b>Specification</b><div>${html(workflowSpec.status)}</div></div><div class="card"><b>Plan</b><div>${html(workflowPlan.status)}</div></div>` : ''}<div class="card"><b>Status</b><div>${html(state.lifecycle.status)}</div></div><div class="card"><b>Active task</b><div>${html(state.lifecycle.active_task || 'none')}</div></div><div class="card"><b>Blocker</b><div>${html(state.lifecycle.blocker || 'none')}</div></div></section>
+<h2>Phase contract</h2><div class="card">${html(workflowInstruction(state))}</div>
 <h2>Next action</h2><div class="card">${html(state.lifecycle.next_action)}</div>
 <h2>Tasks and proof</h2><table><thead><tr><th>ID</th><th>Outcome</th><th>State</th><th>Risk</th><th>Gates</th><th>Next</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No tasks yet.</td></tr>'}</tbody></table>
 <h2>Recent local traces</h2><table><thead><tr><th>At</th><th>Event</th><th>Redacted data</th></tr></thead><tbody>${traceRows || '<tr><td colspan="3">No traces yet.</td></tr>'}</tbody></table>
@@ -399,6 +563,8 @@ function commandStatus(parsed) {
   const hash = contentHash(repo);
   const view = {
     project: state.project,
+    workflow: state.workflow,
+    artifacts: state.workflow ? [{ ...specStatus(repo, state) }] : [],
     lifecycle: state.lifecycle,
     tasks: state.tasks.map((task) => taskSummary(task, hash)),
     checkpoint: state.checkpoint,
@@ -449,6 +615,140 @@ function parseGate(spec) {
   return { id, command: spec.slice(index + 1), mandatory: true, status: 'pending', evidence: null };
 }
 
+function commandWorkflow(parsed, raw) {
+  const action = raw[1] || 'status';
+  const nested = parseArgs(raw.slice(2));
+  const repo = resolve(nested.positional[0] || '.');
+  const state = loadState(repo);
+  if (action !== 'status') throw new Error(`unknown workflow action: ${action}`);
+  console.log(JSON.stringify({ workflow: state.workflow, lifecycle: state.lifecycle, specification: state.workflow ? specStatus(repo, state) : null, plan: state.workflow ? planStatus(repo, state) : null }, null, 2));
+}
+
+function commandSpec(parsed, raw) {
+  const action = raw[1];
+  const nested = parseArgs(raw.slice(2));
+  const repo = resolve(nested.positional[0] || '.');
+  const state = loadState(repo);
+  if (action === 'start') {
+    startNewProduct(repo, state);
+    saveState(repo, state, 'spec.started', { path: 'SPEC.md' });
+    console.log('Started new-product specification at SPEC.md');
+    return;
+  }
+  const spec = specification(repo, state);
+  if (action === 'status') {
+    console.log(JSON.stringify(specStatus(repo, state), null, 2));
+    return;
+  }
+  if (action === 'check') {
+    if (spec.problems.length) throw new Error(`specification is incomplete; ${spec.problems.join(', ')}`);
+    spec.artifact.status = 'checked';
+    spec.artifact.requirements = spec.requirements;
+    spec.artifact.source_hash = spec.hash;
+    spec.artifact.approval = null;
+    state.workflow.phase = 'specification';
+    state.workflow.spec_check = { at: now(), source_hash: spec.hash, requirements: spec.requirements };
+    state.workflow.plan_approval = null;
+    const task = state.tasks.find((item) => item.id === 'SPEC-1');
+    task.state = 'active';
+    task.gates[0].status = 'pending';
+    task.gates[0].evidence = null;
+    task.updated_at = now();
+    state.lifecycle = { phase: 'specification', status: 'active', active_task: task.id, blocker: null, next_action: 'Ask the human to review SPEC.md, then record explicit specification approval.' };
+    saveState(repo, state, 'spec.checked', { requirements: spec.requirements.length, source_hash: spec.hash });
+    console.log(`Specification checked: ${spec.requirements.length} requirements`);
+    return;
+  }
+  if (action === 'approve') {
+    const human = nested.options.human;
+    if (!human || human === true) throw new Error('spec approve requires --human');
+    if (!nested.options.reason || nested.options.reason === true) throw new Error('spec approve requires --reason');
+    if (spec.problems.length) throw new Error(`specification is incomplete; ${spec.problems.join(', ')}`);
+    if (state.workflow.spec_check?.source_hash !== spec.hash) throw new Error('run spec check against the current SPEC.md before approval');
+    const at = now(), task = state.tasks.find((item) => item.id === 'SPEC-1');
+    spec.artifact.status = 'approved';
+    spec.artifact.requirements = spec.requirements;
+    spec.artifact.source_hash = spec.hash;
+    spec.artifact.approval = { human, reason: nested.options.reason || null, at, source_hash: spec.hash };
+    task.gates[0].status = 'pass';
+    task.gates[0].evidence = { human, reason: nested.options.reason || null, source_hash: contentHash(repo), observed_at: at };
+    task.state = 'done';
+    task.updated_at = at;
+    state.workflow.phase = 'planning';
+    state.lifecycle = { phase: 'planning', status: 'active', active_task: null, blocker: null, next_action: 'Create requirement-linked implementation tasks with executable gates, then run genesis plan check.' };
+    saveState(repo, state, 'spec.approved', { human, source_hash: spec.hash });
+    console.log(`Specification approved by ${human}; workflow moved to planning`);
+    return;
+  }
+  throw new Error(`unknown spec action: ${action}`);
+}
+
+function commandPlan(parsed, raw) {
+  const action = raw[1] || 'status';
+  const nested = parseArgs(raw.slice(2));
+  const repo = resolve(nested.positional[0] || '.');
+  const state = loadState(repo);
+  if (!state.workflow) throw new Error('no active workflow');
+  const result = planStatus(repo, state), hash = result.hash;
+  if (action === 'status') {
+    console.log(JSON.stringify({ status: result.status, problems: result.problems, requirements: result.requirements, tasks: result.tasks.map((task) => task.id), approval: state.workflow.plan_approval }, null, 2));
+    return;
+  }
+  if (action === 'check') {
+    if (result.problems.length) throw new Error(`plan is incomplete; ${result.problems.join(', ')}`);
+    state.workflow.plan_check = { at: now(), source_hash: hash };
+    state.workflow.plan_approval = null;
+    saveState(repo, state, 'plan.checked', { tasks: result.tasks.length, source_hash: hash });
+    console.log(`Plan checked: ${result.tasks.length} tasks cover ${result.requirements.length} requirements`);
+    return;
+  }
+  if (action === 'approve') {
+    const human = nested.options.human;
+    if (!human || human === true) throw new Error('plan approve requires --human');
+    if (!nested.options.reason || nested.options.reason === true) throw new Error('plan approve requires --reason');
+    if (result.problems.length) throw new Error(`plan is incomplete; ${result.problems.join(', ')}`);
+    if (state.workflow.plan_check?.source_hash !== hash) throw new Error('run plan check against the current tasks before approval');
+    state.workflow.plan_approval = { human, reason: nested.options.reason || null, at: now(), source_hash: hash };
+    state.workflow.phase = 'build';
+    const first = result.tasks.find((task) => task.state === 'queued');
+    if (first) first.state = 'active';
+    state.lifecycle = { phase: 'build', status: first ? 'active' : 'ready', active_task: first?.id || null, blocker: null, next_action: first?.next_action || 'Add the next approved implementation task.' };
+    saveState(repo, state, 'plan.approved', { human, source_hash: hash });
+    console.log(`Plan approved by ${human}; workflow moved to build`);
+    return;
+  }
+  throw new Error(`unknown plan action: ${action}`);
+}
+
+function commandAgent(parsed, raw) {
+  const action = raw[1];
+  const nested = parseArgs(raw.slice(2));
+  const repo = resolve(nested.positional[0] || '.');
+  const state = loadState(repo);
+  if (action !== 'connect') throw new Error(`unknown agent action: ${action}`);
+  const selected = nested.options.codex || nested.options.claude ? [] : ['AGENTS.md', 'CLAUDE.md'];
+  if (nested.options.codex) selected.push('AGENTS.md');
+  if (nested.options.claude) selected.push('CLAUDE.md');
+  const block = `<!-- genesis:start -->
+## Genesis workflow
+
+Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+<!-- genesis:end -->`;
+  if (!nested.options.write) {
+    console.log(JSON.stringify({ dry_run: true, files: selected, block }, null, 2));
+    return;
+  }
+  for (const name of selected) {
+    const path = join(repo, name);
+    if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error(`refusing to replace symlink: ${name}`);
+    const before = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    if (!before.includes('<!-- genesis:start -->')) atomicWrite(path, `${before}${before && !before.endsWith('\n') ? '\n' : ''}${before ? '\n' : ''}${block}\n`);
+    if (!state.agent_connections.includes(name)) state.agent_connections.push(name);
+  }
+  saveState(repo, state, 'agent.connected', { files: selected });
+  console.log(`Connected Genesis instructions: ${selected.join(', ')}`);
+}
+
 function commandTask(parsed, raw) {
   const action = raw[1];
   const nested = parseArgs(raw.slice(2));
@@ -459,6 +759,14 @@ function commandTask(parsed, raw) {
     if (!id || !SAFE_ID.test(id) || state.tasks.some((task) => task.id === id)) throw new Error('task add requires a unique safe --id');
     const risk = nested.options.risk === true || !nested.options.risk ? 'low' : nested.options.risk;
     if (!RISK.has(risk)) throw new Error(`invalid risk: ${risk}`);
+    const requirements = values(nested.options.requirement);
+    if (state.workflow) {
+      if (['discovery', 'specification'].includes(state.workflow.phase)) throw new Error('specification approval is required before implementation planning');
+      const known = new Set(specStatus(repo, state).requirements);
+      if (!requirements.length) throw new Error('workflow tasks require at least one --requirement ID');
+      const unknown = requirements.filter((item) => !known.has(item));
+      if (unknown.length) throw new Error(`unknown requirement: ${unknown.join(', ')}`);
+    }
     const gates = values(nested.options.gate).map(parseGate);
     if (risk !== 'low' && !gates.some((gate) => gate.id === 'independent-review')) {
       gates.push({ id: 'independent-review', command: '', mandatory: true, status: 'pending', evidence: null });
@@ -467,17 +775,22 @@ function commandTask(parsed, raw) {
       id,
       outcome: nested.options.outcome === true || !nested.options.outcome ? 'Define the task outcome.' : nested.options.outcome,
       state: 'queued', risk, owner: nested.options.owner || null,
-      scope: values(nested.options.scope), dependencies: values(nested.options.depends),
+      scope: values(nested.options.scope), dependencies: values(nested.options.depends), requirements,
       gates,
       next_action: nested.options.next === true || !nested.options.next ? 'Run the task pre-flight.' : nested.options.next,
       blocker: null, notes: [], failures: [], limitations: [], created_at: now(), updated_at: now(),
     };
     state.tasks.push(task);
-    if (!state.lifecycle.active_task) {
+    if (!state.lifecycle.active_task && state.workflow?.phase !== 'planning') {
       state.lifecycle.active_task = id;
       state.lifecycle.phase = 'build';
       task.state = 'active';
       state.lifecycle.next_action = task.next_action;
+    }
+    if (state.workflow?.phase === 'planning') {
+      state.workflow.plan_check = null;
+      state.workflow.plan_approval = null;
+      state.lifecycle.next_action = 'Finish defining requirement-linked tasks, then run genesis plan check.';
     }
     saveState(repo, state, 'task.added', { id, outcome: task.outcome });
     console.log(`Added ${id}`);
@@ -526,6 +839,7 @@ function commandTask(parsed, raw) {
       state.lifecycle.status = next ? 'active' : 'ready';
       state.lifecycle.next_action = next?.next_action || 'Review completed work and choose the next bounded outcome.';
       if (next) next.state = 'active';
+      if (state.workflow && !next) state.workflow.phase = 'verify';
     }
     saveState(repo, state, 'task.completed', { id });
     console.log(`Completed ${id}`);
@@ -701,14 +1015,20 @@ function printHelp() {
   console.log(`Genesis software-factory CLI
 
 Usage:
-  genesis init <repo> [--name N] [--objective TEXT] [--profile prototype|production|regulated]
+  genesis init <repo> [--name N] [--objective TEXT] [--workflow new-product] [--profile prototype|production|regulated]
   genesis adopt <repo> [--write]
+  genesis workflow status <repo>
+  genesis spec start|status|check <repo>
+  genesis spec approve <repo> --human NAME --reason TEXT
+  genesis plan status|check <repo>
+  genesis plan approve <repo> --human NAME --reason TEXT
+  genesis agent connect <repo> [--codex] [--claude] [--write]
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
-  genesis task add <repo> --id ID --outcome TEXT [--risk low] [--gate id:command]
+  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low] [--gate id:command]
   genesis task set|complete <repo> --id ID
   genesis gate <repo> [task-id]
   genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
@@ -728,6 +1048,10 @@ async function main(raw) {
   if (command === 'checkpoint' || command === 'kickoff') return commandCheckpoint(parsed);
   if (command === 'dashboard') return commandDashboard(parsed);
   if (command === 'trace') return commandTrace(parsed);
+  if (command === 'workflow') return commandWorkflow(parsed, raw);
+  if (command === 'spec') return commandSpec(parsed, raw);
+  if (command === 'plan') return commandPlan(parsed, raw);
+  if (command === 'agent') return commandAgent(parsed, raw);
   if (command === 'record') return commandRecord(parsed, raw);
   if (command === 'task') return commandTask(parsed, raw);
   if (command === 'gate') return commandGate(parsed);
