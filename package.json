@@ -1,6 +1,6 @@
 {
   "name": "genesis-harness",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Repository-native human-AI development harness",
   "type": "module",
   "bin": {

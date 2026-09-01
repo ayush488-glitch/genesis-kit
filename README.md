@@ -50,7 +50,7 @@ cd ~/.local/share/genesis-kit
 ./install.sh
 ```
 
-The offline, idempotent installer copies the Genesis skill for supported coding agents and links `genesis` into `~/.local/bin`. It does not edit shell startup files or download dependencies.
+The offline, idempotent installer copies the Genesis skill and a pinned copy of the official MIT-licensed [Ponytail](https://github.com/DietrichGebert/ponytail) base skill for supported coding agents, then links `genesis` into `~/.local/bin`. It does not edit shell startup files or download dependencies.
 
 ## New-product workflow
 
