@@ -7,8 +7,10 @@ node -e 'if (+process.versions.node.split(".")[0] < 18) process.exit(1)' \
   || { echo "Genesis requires Node.js 18+." >&2; exit 1; }
 
 for AGENT_DIR in "$HOME/.codex/skills" "$HOME/.claude/skills"; do
-  mkdir -p "$AGENT_DIR/genesis"
-  cp "$KIT_DIR/skills/genesis/SKILL.md" "$AGENT_DIR/genesis/SKILL.md"
+  for SKILL in genesis ponytail; do
+    mkdir -p "$AGENT_DIR/$SKILL"
+    cp "$KIT_DIR/skills/$SKILL/SKILL.md" "$AGENT_DIR/$SKILL/SKILL.md"
+  done
 done
 
 BIN_DIR="${GENESIS_BIN_DIR:-$HOME/.local/bin}"
@@ -26,7 +28,7 @@ ln -sfn "$KIT_DIR/tools/genesis.mjs" "$BIN"
 
 echo "Genesis installed offline."
 echo "  CLI: $BIN"
-echo "  Skills: $HOME/.codex/skills/genesis and $HOME/.claude/skills/genesis"
+echo "  Skills: Genesis + Ponytail for Codex and Claude Code"
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   echo "  Add $BIN_DIR to PATH, or invoke $BIN directly."
 fi
