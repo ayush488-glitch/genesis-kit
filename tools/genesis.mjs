@@ -157,7 +157,7 @@ function inputManifest(repo, extra = []) {
     try { info = lstatSync(path); } catch { result[name] = 'missing'; continue; }
     if (info.isSymbolicLink()) {
       const target = realpathSync(path);
-      if (relative(repo, target).startsWith('..') || !statSync(target).isFile()) throw new Error(`input symlink must target a file inside the repository: ${name}`);
+      if (relative(realpathSync(repo), target).startsWith('..') || !statSync(target).isFile()) throw new Error(`input symlink must target a file inside the repository: ${name}`);
       result[name] = digest(`${readlinkSync(path)}:${fileHash(target)}`);
     } else if (info.isFile()) result[name] = digest(`${info.mode & 0o111}:${fileHash(path)}`);
   }

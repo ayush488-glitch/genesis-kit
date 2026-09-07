@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync, spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,4 +178,12 @@ test('revocation during runner verification cancels the gate before completion',
   assert.notEqual(await done, 0);
   assert.equal(state(p).attempts.at(-1).stop_reason, 'authorization-expired');
   assert.notEqual(state(p).tasks[0].state, 'done');
+});
+
+
+test('internal symlink inputs work through repository aliases and stale with their target', t => {
+  const p = fixture(t); symlinkSync('app.txt', join(p, 'alias.txt')); add(p, gate);
+  const alias = join(p, '.genesis/local/repo-alias'); symlinkSync(p, alias);
+  run(['gate', alias]); writeFileSync(join(p, 'app.txt'), 'updated');
+  run(['task', 'complete', p, '--id', 'T-1'], false);
 });
