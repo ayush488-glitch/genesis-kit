@@ -1251,7 +1251,7 @@ function commandRecover(parsed) {
 }
 
 const BRIEF_STAGES = ['research', 'plan', 'implement', 'verify', 'recover'];
-const briefStage = state => ({ discovery: 'research', specification: 'research', planning: 'plan', build: 'implement', verify: 'verify' }[state.lifecycle.phase] || 'research');
+const briefStage = state => ['paused', 'blocked', 'failed'].includes(state.lifecycle.status) ? 'recover' : ({ discovery: 'research', specification: 'research', planning: 'plan', build: 'implement', verify: 'verify' }[state.lifecycle.phase] || 'research');
 const excerpt = (value, size = 280) => { const text = String(value || ''); return text.length > size ? text.slice(0, size) + '…' : text; };
 
 function contextPacket(repo, state, task, budget = 8000, options = {}) {

@@ -220,6 +220,8 @@ test('briefs include reusable phase guidance without overriding workflow state',
   assert.match(brief.instruction, /active bounded task/);
   run(['brief', p, '--stage', '../escape'], false);
   run(['context', p, 'missing-task'], false);
+  run(['control', 'pause', p, 'T-1']);
+  assert.equal(JSON.parse(run(['brief', p]).stdout).stage, 'recover');
 });
 
 test('context fingerprints include selected environment and full attempts are retrievable', t => {
