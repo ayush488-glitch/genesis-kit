@@ -42,6 +42,8 @@ The canonical record is `.genesis/project.json`. `KICKOFF.md`, `PLAN.md`, the da
 
 ## Local control panel
 
+![Genesis control panel: layered Overview, Tasks, and Evidence views](docs/assets/control-panel-showcase.png)
+
 ```sh
 genesis dashboard . --open
 # Or preview an isolated, synthetic project from a kit checkout:
