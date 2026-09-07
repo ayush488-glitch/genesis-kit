@@ -69,7 +69,7 @@ test('gate proof fails closed, records provenance, and becomes stale after sourc
   run(['task', 'add', repo, '--id', 'T-1', '--outcome', 'Ship one thing', '--gate', 'tests:node -e "process.exit(0)"']);
   run(['task', 'complete', repo, '--id', 'T-1'], { ok: false });
   run(['gate', repo, 'T-1']);
-  const proof = JSON.parse(readFileSync(join(repo, '.genesis', 'evidence', 'T-1-tests.json'), 'utf8'));
+  const proof = JSON.parse(readFileSync(join(repo, state(repo).tasks[0].gates[0].evidence.path), 'utf8'));
   assert.equal(proof.exit_code, 0);
   assert.equal(proof.environment.node, process.version);
   assert.ok(proof.source_hash);
@@ -140,8 +140,8 @@ test('learning proposals cannot activate without regression, rollback, review, a
   run(['learn', 'propose', repo, '--id', 'LR-1', '--rule', 'Reuse the shared parser']);
   run(['learn', 'approve', repo, '--id', 'LR-1', '--human', 'owner', '--review', 'pass'], { ok: false });
   run(['learn', 'propose', repo, '--id', 'LR-2', '--rule', 'Reuse the shared parser', '--regression', 'node --test', '--rollback', 'deactivate LR-2']);
-  run(['learn', 'approve', repo, '--id', 'LR-2', '--human', 'owner', '--review', 'pass']);
-  assert.equal(state(repo).learning_proposals.find((item) => item.id === 'LR-2').status, 'active');
+  run(['learn', 'approve', repo, '--id', 'LR-2', '--human', 'owner', '--review', 'pass'], { ok: false });
+  assert.equal(state(repo).learning_proposals.find((item) => item.id === 'LR-2').status, 'proposed');
 });
 
 test('dashboard escapes project-controlled text', () => {
