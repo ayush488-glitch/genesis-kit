@@ -42,7 +42,7 @@ The canonical record is `.genesis/project.json`. `KICKOFF.md`, `PLAN.md`, the da
 
 ## Local control panel
 
-![Genesis control panel: layered Overview, Tasks, and Evidence views](docs/assets/control-panel-showcase.png)
+![Genesis control panel: layered Overview, Tasks, and Evidence views](docs/assets/control-panel-showcase.jpg)
 
 ```sh
 genesis dashboard . --open
