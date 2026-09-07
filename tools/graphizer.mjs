@@ -30,11 +30,11 @@ function resolveJsImport(from, specifier) { if (!specifier.startsWith('.') && !s
 function resolvePythonImport(from, specifier) { const match = specifier.match(/^(\.+)(.*)$/); let base = match ? dirname(from) : root, module = match ? match[2] : specifier; if (match) for (let i = 1; i < match[1].length; i++) base = dirname(base); const path = join(base, ...module.split('.').filter(Boolean)); for (const candidate of [`${path}.py`, join(path, '__init__.py')]) if (known.has(candidate)) return candidate; return match ? undefined : null; }
 function addDependency(from, specifier, line, language, standard = false) {
   const target = language === 'javascript' ? resolveJsImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
-  const confidence = language === 'python' ? 1 : .85;
+  const confidence = .85;
   if (target) return addEdge({ type: 'imports', source, target: fileId(target), specifier, line, resolved: true, confidence, provenance: provenance(extractor, rel) });
   const name = packageName(specifier.replace(/^node:|^\.+/, ''));
   if (standard || (language === 'javascript' && NODE_BUILTINS.has(name))) { const id = `runtime:${language}:${name}`; addNode({ id, type: 'runtime', label: name, language, confidence, provenance: provenance('standard-library', rel), contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: true, confidence, provenance: provenance(extractor, rel) }); }
-  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, provenance: provenance('import', rel), contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: true, confidence, provenance: provenance(extractor, rel) }); }
+  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, provenance: provenance('import', rel), contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .5, provenance: provenance(extractor, rel) }); }
   const id = `unresolved:${rel}:${specifier}`; addNode({ id, type: 'unresolved', label: specifier, confidence: .4, provenance: provenance('import', rel), contentHash: hash(id) }); addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .4, provenance: provenance(extractor, rel) });
 }
 

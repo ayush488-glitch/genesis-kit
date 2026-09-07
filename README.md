@@ -162,3 +162,11 @@ npm test
 See [the workflow plan](docs/workflow-plan.md), [architecture decisions](docs/decisions.md), and [agent adapters](AGENT-ADAPTERS.md).
 
 MIT.
+
+## Verified autonomy (2.2)
+
+Genesis can now run an explicitly authorized agent command for a bounded task, preserve attempt identity across interruptions, and resume verification without replaying a successful worker. Completion requires intact source/configuration-bound proof; a task-state edit or shell command named `independent-review` cannot bypass it.
+
+Use `genesis context .` for bounded task context, `genesis authorize` and `genesis run` for controlled execution, `genesis recover` after interruption, and `genesis evaluate` for baseline/candidate experiments with development and holdout cases. Learned rules need experiment evidence, review and explicit promotion; they can be rolled back.
+
+See [the autonomy contract](docs/autonomy-contract.md) for complete commands, runtime receipt format, migration requirements and host-isolation boundaries.

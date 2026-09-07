@@ -58,3 +58,13 @@ genesis checkpoint <repo>
 ```
 
 The generated kickoff and dashboard are read-only projections of `project.json`. Raw traces stay local and secrets are redacted. Propose cleanup and learned rules; never delete code or promote harness rules silently.
+
+## Verified autonomy
+
+Use `genesis context <repo> [task-id]` to retrieve bounded task context; `--id` retrieves a full durable record. Corrections use `record ... --supersedes <id>` so obsolete knowledge stays out of active context without erasing history.
+
+For autonomous execution, declare file scope and outcome scenarios (actor, scope, environment, duration, observable and executable gate). Record only real user authorization with `genesis authorize grant`; then `genesis run` invokes the bounded host command and verifies completion. Existing authorization persists across sessions. Read the kit's `docs/autonomy-contract.md` for argument and receipt schemas.
+
+Never route completion through `task set`. Run executable gates; runtime gates must independently check their target and return a source-bound JSON receipt. Medium/high-risk work still requires independent review of current evidence. Do not impersonate a reviewer. Resume a stopped review with `genesis run`; unchanged successful worker attempts are reused. After a crash, use `genesis recover`, inspect uncertain side effects and resume explicitly. Do not automatically replay side effects.
+
+Keep causal incident hypotheses separate from supported diagnoses. Learning proposals require baseline/candidate evaluation with development and holdout cases, a matching policy artifact, independent review, explicit promotion and rollback. Candidate work directories are not sandboxes; host permissions must protect the evaluator and holdout. Never treat self-reported success or a tied evaluation as measured improvement.
