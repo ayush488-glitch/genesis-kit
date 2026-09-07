@@ -1115,7 +1115,7 @@ async function commandGate(parsed) {
     if (parsed.options.reuse && proofStatus(repo, state, task, gate) === 'pass') continue;
     const remaining = parsed.options.deadline ? parsed.options.deadline - Date.now() : timeout;
     if (remaining <= 0) throw new Error('run time budget exhausted before next gate');
-    const attempt = beginAttempt(repo, id, 'gate', gate.command, Math.min(timeout, remaining));
+    const attempt = beginAttempt(repo, id, 'gate', gate.command, Math.min(timeout, remaining), parsed.options.authorization || null);
     const result = await executeAttempt(repo, attempt);
     const failed = withLock(repo, () => {
       const latest = loadState(repo), currentTask = latest.tasks.find(t => t.id === id);
@@ -1234,7 +1234,7 @@ async function commandRun(parsed) {
     if (!grant) throw new Error(`${task.id} needs a current task-scoped command authorization`);
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error('run time budget exhausted; checkpoint is resumable');
-    let attempt = [...state.attempts].reverse().find(a => a.task === task.id && a.kind === 'worker' && a.status === 'passed' && a.authorization === grant.id && a.config_hash === taskConfig(state, task) && a.after_hash === digest(inputManifest(repo, task.inputs)));
+    let attempt = [...state.attempts].reverse().find(a => a.task === task.id && a.kind === 'worker' && a.status === 'passed' && a.authorization === grant.id && a.config_hash === taskConfig(state, task) && a.after_hash === digest(inputManifest(repo, task.inputs)) && digest(a.environment) === digest(environment(task)));
     if (!attempt) {
     attempt = beginAttempt(repo, task.id, 'worker', grant.command, Math.min(grant.timeout, remaining), grant.id);
     const result = await executeAttempt(repo, attempt);
@@ -1256,9 +1256,10 @@ async function commandRun(parsed) {
     }
     const gateBudget = deadline - Date.now();
     if (gateBudget <= 0) throw new Error('worker finished; time budget exhausted before verification');
-    await commandGate({ positional: [repo, task.id], options: { timeout: Math.min(gateBudget, 120000), reuse: true, deadline } });
+    await commandGate({ positional: [repo, task.id], options: { timeout: Math.min(gateBudget, 120000), reuse: true, deadline, authorization: grant.id } });
     withLock(repo, () => {
       const latest = loadState(repo), current = latest.tasks.find(t => t.id === task.id);
+      if (!validAuthorization(latest, current, grant.id)) throw new Error('authorization expired before completion');
       completeTask(repo, latest, current);
       latest.checkpoint = { at: now(), revision: revision(repo), active_task: latest.lifecycle.active_task, next_action: latest.lifecycle.next_action };
       saveState(repo, latest, 'run.completed-task', { task: task.id, attempt: attempt.id });
@@ -1450,6 +1451,7 @@ function commandLearn(parsed, raw) {
     const experiment = verifiedExperiment(repo, state, requireText(nested.options.experiment, '--experiment'));
     if (proposal.status === 'active') throw new Error('active rules cannot change their experiment');
     const policy = requireText(nested.options.policy, '--policy');
+    if (!Object.hasOwn(inputManifest(experiment.candidate), policy)) throw new Error('policy must be a fingerprinted candidate input');
     const artifact = readJson(safePath(experiment.candidate, policy));
     if (artifact.rule !== proposal.rule) throw new Error('candidate policy must contain the exact proposed rule');
     proposal.policy = policy;

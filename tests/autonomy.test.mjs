@@ -165,3 +165,17 @@ test('live writers cannot have their attempt stolen by recovery', async t => {
   child.kill('SIGTERM'); await done;
   assert.equal(state(p).attempts[0].status, 'failed');
 });
+
+test('revocation during runner verification cancels the gate before completion', async t => {
+  const p = fixture(t);
+  add(p, ['--gate', 'check:node -e "setTimeout(()=>{},30000)"', '--scope', 'app.txt', '--scenario', scenario]);
+  authorize(p, 'node -e "process.exit(0)"');
+  const child = spawn(process.execPath, [cli, 'run', p], { stdio: 'ignore' });
+  t.after(() => child.kill()); const done = new Promise(resolve => child.on('close', resolve));
+  for (let i = 0; i < 200 && !state(p).attempts.some(a => a.kind === 'gate' && a.child_pid); i++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(state(p).attempts.some(a => a.kind === 'gate' && a.child_pid));
+  run(['authorize', 'revoke', p, '--id', 'A-1']);
+  assert.notEqual(await done, 0);
+  assert.equal(state(p).attempts.at(-1).stop_reason, 'authorization-expired');
+  assert.notEqual(state(p).tasks[0].state, 'done');
+});
