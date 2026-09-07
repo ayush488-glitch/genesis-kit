@@ -131,12 +131,12 @@ attempts before replaying commands. Persist decisions and checkpoint before stop
 For a task $t$, Genesis treats completion as a conjunction of checks:
 
 $$
-\operatorname{Done}(t) \Rightarrow
-\operatorname{Active}(t) \land
-\operatorname{DependenciesDone}(t) \land
-\operatorname{ScopeValid}(t) \land
-\bigwedge_{g\in G_t}\operatorname{FreshProof}(g) \land
-\operatorname{RequiredReview}(t).
+\mathrm{Done}(t) \Rightarrow
+\mathrm{Active}(t) \land
+\mathrm{DependenciesDone}(t) \land
+\mathrm{ScopeValid}(t) \land
+\bigwedge_{g\in G_t}\mathrm{FreshProof}(g) \land
+\mathrm{RequiredReview}(t).
 $$
 
 Here $G_t$ is the set of mandatory gates, including at least one executable gate. Workflow approval is required for specification-first projects. Scope is enforced when declared and is required for autonomous execution. Independent human review is required above low risk.
