@@ -187,3 +187,49 @@ test('internal symlink inputs work through repository aliases and stale with the
   run(['gate', alias]); writeFileSync(join(p, 'app.txt'), 'updated');
   run(['task', 'complete', p, '--id', 'T-1'], false);
 });
+
+test('compact context preserves binding rules and supports explicit unchanged packets', t => {
+  const p = fixture(t); add(p, [...gate, '--scope', 'app.txt']);
+  run(['record', 'invariant', p, '--id', 'INV-1', '--text', 'Preserve tenant isolation', '--path', 'app.txt']);
+  run(['record', 'knowledge', p, '--id', 'K-1', '--title', 'Long observation', '--text', 'Observed detail. '.repeat(100), '--path', 'app.txt']);
+  const out = run(['context', p]).stdout.trim(), packet = JSON.parse(out);
+  assert.equal(packet.metrics.bytes, Buffer.byteLength(out));
+  assert.ok(packet.metrics.bytes <= 8000);
+  assert.equal(packet.records.find(r => r.id === 'INV-1').text, 'Preserve tenant isolation');
+  assert.equal(packet.records.find(r => r.id === 'K-1').truncated, true);
+  assert.ok(JSON.parse(run(['context', p, '--id', 'K-1']).stdout).text.length > 1000);
+  assert.equal(JSON.parse(run(['context', p, '--since', packet.fingerprint]).stdout).unchanged, true);
+  writeFileSync(join(p, 'app.txt'), 'changed');
+  assert.notEqual(JSON.parse(run(['context', p, '--since', packet.fingerprint]).stdout).fingerprint, packet.fingerprint);
+});
+
+test('binding invariants cannot silently disappear to fit a context budget', t => {
+  const p = fixture(t); add(p, gate);
+  run(['record', 'invariant', p, '--id', 'INV-1', '--text', 'Binding requirement. '.repeat(800)]);
+  run(['context', p], false);
+  const packet = JSON.parse(run(['context', p, '--bytes', '24000']).stdout);
+  assert.equal(packet.records[0].text.length, 'Binding requirement. '.repeat(800).length);
+});
+
+test('briefs include reusable phase guidance without overriding workflow state', t => {
+  const p = fixture(t);
+  // A task-only brief remains explicit about its actual phase and requested guide.
+  add(p, gate);
+  const brief = JSON.parse(run(['brief', p, '--stage', 'research']).stdout);
+  assert.equal(brief.stage, 'research'); assert.match(brief.guide, /Do not implement during research/);
+  assert.match(brief.instruction, /active bounded task/);
+  run(['brief', p, '--stage', '../escape'], false);
+  run(['context', p, 'missing-task'], false);
+  run(['control', 'pause', p, 'T-1']);
+  assert.equal(JSON.parse(run(['brief', p]).stdout).stage, 'recover');
+});
+
+test('context fingerprints include selected environment and full attempts are retrievable', t => {
+  const p = fixture(t); add(p, [...gate, '--env', 'GENESIS_CONTEXT_ENV']);
+  const before = JSON.parse(run(['context', p]).stdout);
+  const changed = spawnSync(process.execPath, [cli, 'context', p, '--since', before.fingerprint], { env: { ...process.env, GENESIS_CONTEXT_ENV: 'changed' }, encoding: 'utf8' });
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.notEqual(JSON.parse(changed.stdout).fingerprint, before.fingerprint);
+  run(['gate', p]); const attempt = state(p).attempts[0];
+  assert.equal(JSON.parse(run(['context', p, '--id', attempt.id, '--type', 'attempts']).stdout).status, 'passed');
+});

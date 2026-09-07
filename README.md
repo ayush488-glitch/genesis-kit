@@ -6,7 +6,7 @@
 
 [![Tests](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-355C4B)](https://nodejs.org/)
-[![Version](https://img.shields.io/badge/version-2.2.0-4A6274)](package.json)
+[![Version](https://img.shields.io/badge/version-2.3.0-4A6274)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-665474)](LICENSE)
 
 [Quick start](#quick-start) · [Architecture](#architecture) · [Completion contract](#completion-contract) · [Experiments](#evaluated-learning) · [Documentation](#documentation)
@@ -40,6 +40,30 @@ Genesis runs locally on **Node.js 18+ with no npm dependencies**. Coding hosts s
 
 The canonical record is `.genesis/project.json`. `KICKOFF.md`, `PLAN.md`, the dashboard and code graph are generated views. Raw redacted event traces stay in the ignored `.genesis/local/` directory.
 
+## Local control panel
+
+```sh
+genesis dashboard . --open
+# Or preview an isolated, synthetic project from a kit checkout:
+npm run demo -- --open
+```
+
+The panel brings together the active next action, task search and state filters, evidence receipts, execution/recovery history, learning proposals and context metrics. It works as a local HTML file, preserves filters and navigation across refreshes, and adapts to narrow screens. Its buttons **copy CLI commands**; they do not execute commands or approve work. Refresh reloads the generated snapshot; rerun `genesis dashboard` after external source changes to recompute evidence freshness.
+
+## Efficient context and reusable briefs
+
+```sh
+genesis brief .                         # Current-phase guide + bounded task context
+genesis brief . --stage research        # research | plan | implement | verify | recover
+genesis context . --stats               # Bytes, heuristic token estimate, omissions
+genesis context . --id K-1              # Full record on demand
+genesis context . --since FINGERPRINT   # Reuse only a full packet already received
+```
+
+The default packet is capped at 8,000 UTF-8 bytes. Optional knowledge is ranked and summarized, while applicable invariants and active rules remain intact. A required contract that cannot fit produces an explicit budget error. `--full --bytes 64000` requests full optional records when needed. The smaller kickoff points to the brief rather than asking agents to load the entire state file.
+
+The original [phase guides](recipes/README.md) make research, planning, implementation, verification and recovery reusable across coding hosts. They give smaller models explicit inputs, outputs and checks; capability improvement still needs evaluation. See the [review, measurements and experiment roadmap](docs/control-room-review.md). `npm run benchmark:context` reproduces payload measurements without a model call.
+
 ## Quick start
 
 Open your project in a coding agent with shell access. Replace the goal below, then copy the **entire prompt**. It covers installation, existing-project adoption, and new-project setup.
@@ -68,7 +92,7 @@ My project goal is: "REPLACE THIS WITH WHAT I WANT TO BUILD."
    files directly from the kit's skills/genesis and skills/ponytail folders.
 
 4. Inspect this project. If it already has Genesis state, read
-   .genesis/KICKOFF.md and run `genesis status .` and `genesis context .`.
+   .genesis/KICKOFF.md and run `genesis status .` and `genesis brief .`.
    Resume the existing workflow; do not initialize over it.
    If it has implementation code but no Genesis state, run `genesis adopt .`
    read-only, show the discovery report, and obtain approval for adoption
@@ -119,7 +143,7 @@ For a later coding session:
 
 ```text
 Resume this repository with Genesis and Ponytail full. Read .genesis/KICKOFF.md,
-run `genesis status .` and `genesis context .`, and verify current source and proof.
+run `genesis status .` and `genesis brief .`, and verify current source and proof.
 Continue the active task within existing authorization. Reconcile interrupted
 attempts before replaying commands. Persist decisions and checkpoint before stopping.
 ```
@@ -180,7 +204,7 @@ Existing repositories start with `genesis adopt .` for a read-only discovery rep
 
 | Command | Purpose |
 | :--- | :--- |
-| `genesis context . --bytes 12000` | Retrieve bounded task context, applicable rules and existing authorization |
+| `genesis context . --bytes 8000` | Retrieve bounded task context, applicable rules and existing authorization |
 | `genesis authorize grant . …` | Record a task-scoped command grant with explicit expiry |
 | `genesis run . --max-tasks 1 --timeout 600000` | Execute within task and wall-clock limits |
 | `genesis control pause . T-1` | Stop active work while preserving operator intent |
@@ -211,7 +235,7 @@ bash -n install.sh
 ./make-zip.sh /tmp/genesis-kit.zip # Offline distribution
 ```
 
-CI runs the suite on Node 18 and 22. The tests cover completion bypasses, missing/tampered evidence, source and environment drift, dependency readiness, runtime mismatch, worker reuse, pause/revocation, timeout, live-process recovery, context supersession and evaluated rule promotion. These are synthetic regression cases, not a representative coding benchmark; private session transcripts are not distributed.
+CI runs syntax checks and the suite on Node 18 and 22. An optional [development container](.devcontainer/devcontainer.json) provides the contributor runtime. The tests cover completion bypasses, missing/tampered evidence, source and environment drift, dependency readiness, runtime mismatch, worker reuse, pause/revocation, timeout, live-process recovery, context supersession and evaluated rule promotion. These are synthetic regression cases, not a representative coding benchmark; private session transcripts are not distributed.
 
 For capability experiments, compare the same host and model with a fixed task set, matched budgets and an independently protected evaluator. Report paired completion outcomes, regressions, interventions, recovery behavior, elapsed time and actual cost. Preserve failed runs and use held-out tasks after candidate selection.
 
@@ -233,7 +257,9 @@ Useful reference points include [SWE-agent](https://github.com/SWE-agent/SWE-age
 
 ## Contributing
 
-Open an issue with a reproducible failure or a bounded proposal. For behavior changes, include the triggering scenario, expected outcome and a regression test. Keep changes small, preserve existing repository state, and run `npm test` before opening a pull request. Claims about autonomy or learning should include the evaluation setup and observed results.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), the [development and release guide](docs/development.md), and [changelog](CHANGELOG.md). Open an issue with a reproducible failure or a bounded proposal. For behavior changes, include the triggering scenario, expected outcome and a regression test. Keep changes small, preserve existing repository state, and run `npm test` before opening a pull request. Claims about autonomy or learning should include the evaluation setup and observed results.
+
+A manually triggered workflow tests and packages a **draft release** with a ZIP and SHA-256 checksum. Maintainers inspect it before publication; see [the release process](docs/development.md#release-process).
 
 ## License
 
