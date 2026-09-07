@@ -1,0 +1,23 @@
+name: Bounded proposal
+description: Propose an improvement with a measurable outcome.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Observed problem
+      description: Who encounters it, and in which concrete workflow?
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Smallest useful change
+    validations:
+      required: true
+  - type: textarea
+    id: evaluation
+    attributes:
+      label: How would we evaluate it?
+      description: Success criteria, regressions to protect against, and rollback.
+    validations:
+      required: true

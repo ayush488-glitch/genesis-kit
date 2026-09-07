@@ -17,7 +17,7 @@ Load the official Ponytail skill at `full` before architecture or code changes. 
 - New task-only repository: `genesis init <repo> --objective "..."`.
 - Existing repository: `genesis adopt <repo>` first; run again with `--write` only after the human accepts the discovery report.
 - Existing legacy spine: `genesis migrate <repo>` first, then `--write`. Migration preserves every legacy file.
-- Resume: read `.genesis/KICKOFF.md`, then the active task in `.genesis/project.json`.
+- Resume: read `.genesis/KICKOFF.md`, then run `genesis brief <repo>` for the current phase and task contract.
 - Connect cold coding-agent sessions: inspect `genesis agent connect <repo>` first, then use `--write` only with human approval.
 
 If `genesis` is not on `PATH`, run `node <genesis-kit>/tools/genesis.mjs`.
@@ -68,3 +68,10 @@ For autonomous execution, declare file scope and outcome scenarios (actor, scope
 Never route completion through `task set`. Run executable gates; runtime gates must independently check their target and return a source-bound JSON receipt. Medium/high-risk work still requires independent review of current evidence. Do not impersonate a reviewer. Resume a stopped review with `genesis run`; unchanged successful worker attempts are reused. After a crash, use `genesis recover`, inspect uncertain side effects and resume explicitly. Do not automatically replay side effects.
 
 Keep causal incident hypotheses separate from supported diagnoses. Learning proposals require baseline/candidate evaluation with development and holdout cases, a matching policy artifact, independent review, explicit promotion and rollback. Candidate work directories are not sandboxes; host permissions must protect the evaluator and holdout. Never treat self-reported success or a tied evaluation as measured improvement.
+
+
+## Context economy
+
+Use one bounded brief for the active slice; do not load all project.json, research history or prior tool transcripts by default. The compact packet retains binding invariants and active rules. Fetch full records with `context --id` when a summary is insufficient, and respect an explicit budget error. `--full` restores full optional record bodies with a suitable --bytes budget.
+
+Use `--since` only after receiving and retaining the complete packet for that fingerprint. The kickoff's fingerprint alone is not that packet. Token estimates are labeled heuristics; measure actual host usage before claiming savings. Use the original recipes for research, plan, implement, verify and recover without requiring a specific model. Run `genesis dashboard <repo> --open` for the read-only control panel; its buttons copy commands, never execute or approve them.

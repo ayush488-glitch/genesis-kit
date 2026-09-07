@@ -63,7 +63,7 @@ Recovery refuses live processes and marks dead attempts interrupted, with an exp
 
 ## Context and incidents
 
-`genesis context . T-1 --bytes 12000` returns a bounded JSON packet with task contracts, relevant path/tag records, active rules, recent attempts, grants and advisory graph neighbors. `genesis next` is an alias. Use `genesis context . --id K-1` to retrieve a full record. Task contracts are never silently truncated; an insufficient budget returns an error. Generated kickoff views fall back to the core task handoff when the context packet cannot fit.
+`genesis context . T-1 --bytes 8000` returns a bounded JSON packet with task contracts, relevant path/tag records, active rules, recent attempts, grants and advisory graph neighbors. `genesis next` is an alias. Use `genesis context . --id K-1` to retrieve a full record. Task contracts are never silently truncated; an insufficient budget returns an error. Generated kickoff views fall back to the core task handoff when the context packet cannot fit.
 
 Add `--path src/module --tag FR-1` to knowledge records and `--supersedes K-1` to a replacement record. Superseded history remains in canonical state but is excluded from the packet. Static graph confidence describes an inference, not runtime proof; external package imports remain unresolved until independently verified. Graph edges carry the index source fingerprint so consumers can recognize stale indexes.
 
@@ -108,3 +108,10 @@ These copies are not a security boundary: candidate code inherits host filesyste
 ## Upgrade from 2.1
 
 State schema 2 remains readable with additive defaults. Existing executable evidence must be regenerated because the provenance contract changed; approvals depending on that evidence must be repeated. Tasks without mandatory executable proof can remain drafts but cannot complete. Invalid dependency graphs and executable gates using the reserved `independent-review` ID are rejected. Correct those declarations before continuing. Prior learning approvals do not substitute for experiment evidence in the new promotion flow. There are no new package dependencies.
+
+
+## Context views in 2.3
+
+`genesis brief .` adds an original phase guide to the compact context packet. Use `--stage research|plan|implement|verify|recover` to choose a guide while retaining the actual workflow instruction. Optional records are ranked and summarized by default; retrieve full text with `--id` or opt into `--full` with an adequate byte budget. Applicable invariants and active rules are never silently dropped.
+
+`context --stats` reports exact output bytes and a labeled bytes/4 token estimate. `--since FINGERPRINT` returns an unchanged marker only for the same current packet. Reuse it only if the caller already holds that complete packet; otherwise fetch without --since. Fingerprints bind source, selected environment and task configuration as well as context content. This saves repeated payload, not necessarily billed tokens. See [the review and benchmark](control-room-review.md).

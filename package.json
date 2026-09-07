@@ -1,16 +1,27 @@
 {
   "name": "genesis-harness",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Repository-native human-AI development harness",
   "type": "module",
   "bin": {
     "genesis": "tools/genesis.mjs"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check": "node tools/check.mjs",
+    "demo": "node tools/demo.mjs",
+    "benchmark:context": "node tools/benchmark-context.mjs"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayush488-glitch/genesis-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ayush488-glitch/genesis-kit/issues"
+  },
+  "homepage": "https://github.com/ayush488-glitch/genesis-kit#readme"
 }

@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible problem in a Genesis contract or workflow.
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal commands and anonymized inputs. Do not attach credentials or private session transcripts.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Genesis version/commit, Node version, OS, and coding host if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Redacted error, receipt status, or screenshot. Explain which command produced it.
