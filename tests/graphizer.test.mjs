@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -243,4 +243,24 @@ test('a failing python3 costs symbols, not whole files', () => {
   // Dropping the nodes while keeping the edges would leave imports pointing at nothing.
   const ids = new Set(graph.nodes.map((n) => n.id));
   assert.equal(graph.edges.filter((e) => !ids.has(e.source) || !ids.has(e.target)).length, 0, 'no edge points at a missing node');
+});
+
+test('an aliased parent class resolves to the name the target file declares', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-alias-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'base.ts'), 'export class Base {\n  run() {}\n}\n');
+  // The local alias exists only here; base.ts declares Base.
+  writeFileSync(join(root, 'src', 'child.ts'), 'import { Base as Parent } from "./base";\n\nexport class Child extends Parent {\n}\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/child.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
+});
+
+test('artifacts are published atomically and leave no staging files', () => {
+  const root = fixture();
+  execFileSync(process.execPath, [graphizer, root, '--write']);
+  const dir = join(root, '.genesis', 'index');
+  const leftovers = readdirSync(dir).filter((name) => name.endsWith('.tmp'));
+  assert.deepEqual(leftovers, [], 'no staging file survives a write');
+  // A reader must never observe a partial file, so what lands is always complete JSON.
+  assert.doesNotThrow(() => JSON.parse(readFileSync(join(dir, 'graph.json'), 'utf8')));
 });

@@ -119,7 +119,8 @@ genesis query . callers loadUser --json      # for scripts and agents
 
 `impact` is the one to reach for before an edit: everything that transitively imports a file,
 with hop distance. On a real monorepo one shared package answered 2,296 files, which is the
-question a grep cannot answer.
+question a grep cannot answer. It traverses imports only, not calls or inheritance, so treat a
+clean result as a lead rather than proof that nothing else is affected.
 
 ```
 $ genesis query . callers "apps/frontend/src/lib/utils.ts#cn" --limit 3
@@ -134,6 +135,15 @@ matches several definitions Genesis says so and names them rather than choosing 
 ```
 $ genesis query . callers cn
 note: "cn" matches 4; using symbol:apps/comment-to-dm/src/lib/utils.ts#function:cn
+```
+
+With `--json`, an ambiguous reference is reported in the payload rather than only on stderr, one
+entry per reference resolved, so a two-endpoint query like `path` says which end was a guess:
+
+```json
+{ "ambiguous": [ { "ref": "helper", "resolved": "symbol:src/util.ts#function:helper",
+                   "also_matched": ["symbol:src/util.ts#function:helper", "symbol:src/other.ts#function:helper"] } ],
+  "results": [] }
 ```
 
 Call results carry the tier the index resolved them at: `proven` when one definition matched, or
@@ -156,7 +166,9 @@ The same questions become MCP tools: `search_symbols`, `get_definitions`, `get_s
 This is the difference between a map and a tool. Genesis used to push one context packet and hope
 it had guessed right; an agent can now interrogate the index while it works, and ask again when
 the first answer changes the question. The server is read-only by construction and holds no write
-path to project state, so approvals and gates stay in the CLI where the audit trail is.
+path to project state, so approvals and gates stay in the CLI where the audit trail is. It has no
+authentication: any local process can reach a loopback port whatever its filesystem permissions,
+so do not run it against a confidential repository on a shared host.
 
 ## Efficient context and reusable briefs
 

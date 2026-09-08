@@ -2,7 +2,7 @@
 // Deterministic, read-only, zero-dependency source indexer.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 
@@ -352,7 +352,11 @@ for (const [rel, entry] of entries) {
     const from = `symbol:${rel}#${symbol.kind}:${symbol.name}`, site = entry.calls[index];
     if (site.inherits) {
       const binding = imports.get(site.inherits);
-      const parent = binding ? symbolId(binding.file, site.inherits) : symbolId(rel, site.inherits);
+      // `import { Base as Parent }` then `class Child extends Parent`: the target file declares
+      // Base, so look up the imported name. Default and namespace bindings keep the local name.
+      const parent = binding
+        ? symbolId(binding.file, binding.imported === 'default' || binding.imported === '*' ? site.inherits : binding.imported)
+        : symbolId(rel, site.inherits);
       if (parent && parent !== from) addEdge({ type: 'inherits', source: from, target: parent, tier: 'proven', resolved: true, confidence: entry.language === 'python' ? 1 : .8, extractor: callExtractor(entry.language) });
     }
     for (const name of site.names) {
@@ -378,7 +382,15 @@ const json = `${JSON.stringify(graph, null, 2)}\n`, escDot = value => String(val
 const dot = `digraph genesis {\n  rankdir=LR;\n  node [shape=box,fontname="system-ui"];\n${sortedNodes.map(n => `  "${escDot(n.id)}" [label="${escDot(n.label)}",class="${n.type}"];`).join('\n')}\n${sortedEdges.map(e => `  "${escDot(e.source)}" -> "${escDot(e.target)}" [label="${e.type}"];`).join('\n')}\n}\n`;
 const esc = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(graph.project)} code graph</title><style>body{font:14px system-ui;margin:2rem;color:#172033;background:#f7f8fa}header{display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap}input{padding:.6rem;min-width:20rem}section{display:grid;grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));gap:1rem}.card{background:white;border:1px solid #d9deea;border-radius:10px;padding:1rem}.node{padding:.45rem;border-left:4px solid #748ffc;margin:.35rem 0;background:#f8f9ff}.package{border-color:#2f9e44}.unresolved{border-color:#e8590c}.symbol{border-color:#7950f2}small{color:#667085}code{word-break:break-all}</style><header><h1>${esc(graph.project)}</h1><small>${sortedNodes.length} nodes · ${sortedEdges.length} edges · ${sourceHash.slice(0,12)}</small><input id="q" type="search" placeholder="Filter paths, symbols, packages" aria-label="Filter graph"></header><section><div class="card"><h2>Nodes</h2>${sortedNodes.map(n => `<div class="node ${n.type}" data-search="${esc(`${n.id} ${n.label}`.toLowerCase())}"><strong>${esc(n.label)}</strong> <small>${n.type} · ${n.confidence}</small><br><code>${esc(n.id)}</code></div>`).join('')}</div><div class="card"><h2>Relationships</h2>${sortedEdges.map(e => `<div class="node" data-search="${esc(`${e.source} ${e.target} ${e.specifier ?? ''}`.toLowerCase())}"><code>${esc(e.source)}</code> → <code>${esc(e.target)}</code><br><small>${e.type}${e.specifier ? ` · ${esc(e.specifier)}` : ''}</small></div>`).join('')}</div></section><script>q.oninput=()=>document.querySelectorAll('[data-search]').forEach(e=>e.hidden=!e.dataset.search.includes(q.value.toLowerCase()))</script></html>\n`;
-function writeChanged(path, content) { if (existsSync(path) && readFileSync(path,'utf8') === content) return false; writeFileSync(path,content); return true; }
+// Temp file then rename: graph.json is read by the panel, the query layer and the context packet
+// while serve may be rewriting it, and a half-written file is a parse error at the point of use.
+function writeChanged(path, content) {
+  if (existsSync(path) && readFileSync(path, 'utf8') === content) return false;
+  const staging = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(staging, content);
+  renameSync(staging, path);
+  return true;
+}
 const placeholder = existsSync(outPath) && readFileSync(outPath,'utf8').includes('{{');
 if (write || placeholder) { mkdirSync(outDir,{recursive:true}); writeChanged(cachePath, JSON.stringify({ version: CACHE_VERSION, files: nextCache })); const changed = [writeChanged(outPath,json),writeChanged(join(outDir,'graph.dot'),dot),writeChanged(join(outDir,'graph.html'),html)].filter(Boolean).length; console.error(`${changed ? 'wrote' : 'unchanged'} ${sortedNodes.length} nodes, ${sortedEdges.length} edges (${extracted} extracted, ${reused} reused) -> ${posix(relative(root,outDir)) || '.'}`); }
 else { process.stdout.write(json); console.error(`dry run: ${sortedNodes.length} nodes, ${sortedEdges.length} edges; pass --write to save`); }

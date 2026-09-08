@@ -86,3 +86,27 @@ test('get_scope answers for a directory', async () => {
   assert.equal(answer.files, 3);
   assert(answer.symbolCount > 0);
 });
+
+test('ambiguity travels with impact and trace_path, not only the symbol tools', async (t) => {
+  const repo = fixture();
+  const [, impact, trace] = await converse(repo, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_impact', arguments: { path: 'helper' } } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'trace_path', arguments: { from: 'helper', to: 'src/service.ts' } } },
+  ]);
+  const reach = body(impact);
+  assert.equal(reach.also_matched.length, 2, 'impact says which definitions it did not use');
+  assert(reach.resolved);
+  // A path reported for the wrong definition is indistinguishable from one for the right definition.
+  assert.equal(body(trace).from_also_matched.length, 2, 'trace_path does too');
+});
+
+test('an unregistered tool name is an error, not a neighbours query', async (t) => {
+  const repo = fixture();
+  const [, response] = await converse(repo, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_neighbors', arguments: { ref: 'src/util.ts#helper' } } },
+  ]);
+  assert.equal(response.result.isError, true, 'a typo must not return a confident wrong answer');
+  assert.match(response.result.content[0].text, /unknown tool: get_neighbors/);
+});

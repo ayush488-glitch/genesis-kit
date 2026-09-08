@@ -24,8 +24,13 @@ and writes neither; it holds no path that can change project state, approve a ga
 task, and its pages carry no controls that could. The one command it runs is the indexer, against
 its own repository, when a watched source file changes. It stays outside the repository write lock
 because it is a viewer, so it cannot block or serialise other commands. It performs no
-authentication: anyone able to reach that loopback port can read the index and the project state,
-which is the same access anyone able to read the repository already has.
+authentication and no authorization. Any local process can reach a loopback port regardless of
+filesystem permissions, so on a shared or multi-user host an account with no read access to the
+repository can still read the whole index and project state over its unauthenticated GET routes.
+Loopback binding limits reach to the machine; it does not limit reach to you. `genesis serve` is
+therefore unsuitable for a confidential repository on a shared host. Use `genesis dashboard`,
+which generates a file governed by ordinary filesystem permissions, or do not run the server
+there.
 
 `genesis query` and `genesis mcp` read the generated index and nothing else. Their answers are
 static analysis and are marked advisory throughout: a call that cannot be resolved to one
