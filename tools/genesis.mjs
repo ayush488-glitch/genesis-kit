@@ -549,11 +549,11 @@ function planStatus(repo, state) {
 }
 
 function workflowInstruction(state) {
-  if (!state.workflow) return 'Work only on the active bounded task.';
+  if (!state.workflow) return 'Work only on the active bounded task. Check `genesis query . impact PATH` before editing shared code.';
   if (state.lifecycle.phase === 'discovery') return 'Interview the human and complete SPEC.md. Do not write product implementation code.';
   if (state.lifecycle.phase === 'specification') return 'Present the checked SPEC.md for explicit human approval. Do not write product implementation code.';
   if (state.lifecycle.phase === 'planning') return 'Create requirement-linked implementation tasks with executable gates. Do not write product implementation code.';
-  return 'Implement only the active task and prove it against current sources.';
+  return 'Implement only the active task and prove it against current sources. Check `genesis query . impact PATH` before editing shared code.';
 }
 
 function renderPlan(repo, state) {
@@ -594,6 +594,8 @@ function renderKickoff(repo, state) {
     '## Resume', '',
     'Load Genesis and official Ponytail full, then run `genesis brief .` for the current task contract, binding rules and phase guide.',
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
+    'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
+    'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
@@ -862,6 +864,23 @@ function commandAgent(parsed, raw) {
 ## Genesis workflow
 
 Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+
+### Ask the index before reading the code
+
+This repository is indexed. Querying it is faster than grepping and answers questions grep cannot.
+
+- \`genesis query . search NAME\` — where a name is defined, when you know the name but not the file
+- \`genesis query . scope PATH\` — what a file or directory depends on, and what depends on it
+- \`genesis query . callers REF\` / \`callees REF\` — call edges for a symbol
+- \`genesis query . impact PATH\` — everything that transitively imports a file. Run this before editing shared code; it is the blast radius
+- \`genesis query . path FROM TO\` — how two files are connected
+- Add \`--json\` for machine-readable output.
+
+Start from the scope cards and symptom map already in \`genesis brief .\`; they point at declarations before you read anything. Treat every answer as advisory: it is static analysis, so confirm in source before relying on it. A result marked \`ambiguous\` means several definitions matched and none were ruled out — check the candidates rather than assuming the first.
+
+Run \`genesis serve .\` when the structure is unclear or you want to show a human what changed. It draws the repository as a live map, reindexes on save, and is read-only. If the index looks stale and nothing is watching, run \`genesis index .\`.
+
+Hosts that speak MCP can mount the same questions as tools with \`genesis mcp .\`.
 <!-- genesis:end -->`;
   if (!nested.options.write) {
     console.log(JSON.stringify({ dry_run: true, files: selected, block }, null, 2));

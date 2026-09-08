@@ -19,12 +19,18 @@ Load the official Ponytail skill at `full` before architecture or code changes. 
 - Existing legacy spine: `genesis migrate <repo>` first, then `--write`. Migration preserves every legacy file.
 - Resume: read `.genesis/KICKOFF.md`, then run `genesis brief <repo>` for the current phase and task contract.
 - Connect cold coding-agent sessions: inspect `genesis agent connect <repo>` first, then use `--write` only with human approval.
+- Ask the index: `genesis query <repo> search|scope|defines|callers|callees|impact|neighbours|path` (`--json` to parse). Expose the same questions to an MCP host with `genesis mcp <repo>`.
+- See the codebase: `genesis serve <repo> --open` draws it as a live map, reindexes on save and is read-only.
 
 If `genesis` is not on `PATH`, run `node <genesis-kit>/tools/genesis.mjs`.
 
 ## Session contract
 
-Before editing, report `state → evidence → blocker → next action`. Inspect only the relevant graph neighborhood, decisions, and proof. Search the repository before adding anything.
+Before editing, report `state → evidence → blocker → next action`. Inspect only the decisions, proof and code the active task needs.
+
+Query the index before reading widely or grepping. `genesis query <repo> search NAME` finds where a name is defined; `scope PATH` gives a file or directory's dependencies in both directions; `callers`/`callees` give call edges; `impact PATH` gives everything that transitively imports a file, which is the blast radius to check before editing shared code; `path FROM TO` shows how two files connect. Search the repository before adding anything, and query it before searching.
+
+Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript and Python are extracted, so absence from the index is not evidence of absence in the repository.
 
 Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specification, and planning, do not write product implementation code.
 
@@ -74,4 +80,6 @@ Keep causal incident hypotheses separate from supported diagnoses. Learning prop
 
 Use one bounded brief for the active slice; do not load all project.json, research history or prior tool transcripts by default. The compact packet retains binding invariants and active rules. Fetch full records with `context --id` when a summary is insufficient, and respect an explicit budget error. `--full` restores full optional record bodies with a suitable --bytes budget.
 
-Use `--since` only after receiving and retaining the complete packet for that fingerprint. The kickoff's fingerprint alone is not that packet. Token estimates are labeled heuristics; measure actual host usage before claiming savings. Use the original recipes for research, plan, implement, verify and recover without requiring a specific model. Run `genesis dashboard <repo> --open` for the read-only control panel; its buttons copy commands, never execute or approve them.
+Use `--since` only after receiving and retaining the complete packet for that fingerprint. The kickoff's fingerprint alone is not that packet. Token estimates are labeled heuristics; measure actual host usage before claiming savings. Use the original recipes for research, plan, implement, verify and recover without requiring a specific model. Run `genesis dashboard <repo> --open` for the read-only control panel; its buttons copy commands, never execute or approve them. Run `genesis serve <repo> --open` for the live panel: it watches sources, reindexes incrementally on save, and draws the repository as a symbol map with call edges. Both are projections; neither approves work. Run `genesis index <repo>` if the index is stale and nothing is watching.
+
+The brief already carries scope cards and a symptom map read from the index: what each declared scope depends on and what depends on it, and the declarations named by the task text. Start there rather than re-deriving them.
