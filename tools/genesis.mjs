@@ -686,6 +686,14 @@ function commandDashboard(parsed) {
   console.log(path);
 }
 
+function commandMcp(parsed) {
+  const server = join(dirname(fileURLToPath(import.meta.url)), 'mcp.mjs');
+  const repo = resolve(parsed.positional[0] || '.');
+  // Speaks JSON-RPC on stdio and is driven by the host, so it inherits the pipes directly.
+  const result = spawnSync(process.execPath, [server, repo], { stdio: 'inherit' });
+  if (result.status) process.exitCode = result.status;
+}
+
 function commandQuery(parsed, raw) {
   const query = join(dirname(fileURLToPath(import.meta.url)), 'query.mjs');
   const repo = resolve(parsed.positional[0] || '.');
@@ -1524,6 +1532,7 @@ Usage:
   genesis index <repo> [graphizer options]
   genesis serve <repo> [--port N] [--open]   live control panel, read-only
   genesis query <repo> search|defines|callers|callees|impact|neighbours|path ...
+  genesis mcp <repo>                        expose the index to an agent over MCP stdio
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
@@ -1555,6 +1564,7 @@ async function main(raw) {
   if (command === 'recover') return commandRecover(parsed);
   if (command === 'serve') return commandServe(parsed);
   if (command === 'query') return commandQuery(parsed, raw);
+  if (command === 'mcp') return commandMcp(parsed);
   const nestedCommands = ['task', 'control', 'record', 'spec', 'plan', 'agent', 'learn', 'authorize', 'incident', 'workflow'];
   const repo = resolve((nestedCommands.includes(command) ? parseArgs(raw.slice(2)) : parsed).positional[0] || '.');
   return withLock(repo, () => dispatch(command, parsed, raw));
