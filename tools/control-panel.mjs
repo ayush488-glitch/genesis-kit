@@ -6,21 +6,21 @@ export function controlPanelPage({ project }) {
   const escape = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(project)} · Genesis</title><style>
-:root{--bg:#070910;--panel:#0d1119;--line:#1b2231;--ink:#e6ebf5;--dim:#8b96ad;--faint:#556080;--accent:#5eead4;--bad:#f87171}
+:root{--bg:#050807;--panel:#0a0f0e;--line:#1a2422;--ink:#e8e4d9;--dim:#8a9490;--faint:#5a6560;--amber:#ffb454;--gold:#ffd479;--rust:#ff7a45;--sky:#5ec8ea;--bad:#f87171}
 *{box-sizing:border-box}
-body{margin:0;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-columns:250px 1fr 330px;grid-template-rows:44px 1fr}
+body{margin:0;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-columns:240px 1fr 320px;grid-template-rows:44px 1fr}
 header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel);z-index:3}
 header h1{font-size:13px;font-weight:600;margin:0;letter-spacing:.02em}
 header .sep{flex:1}
 .tag{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:2px 7px}
 #live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
 #dot{width:7px;height:7px;border-radius:50%;background:var(--faint);transition:background .3s,box-shadow .3s}
-#dot.on{background:var(--accent);box-shadow:0 0 10px var(--accent)}
-@keyframes flash{0%{box-shadow:0 0 0 0 rgba(94,234,212,.7)}100%{box-shadow:0 0 0 14px rgba(94,234,212,0)}}
+#dot.on{background:var(--amber);box-shadow:0 0 10px var(--amber)}
+@keyframes flash{0%{box-shadow:0 0 0 0 rgba(255,180,84,.7)}100%{box-shadow:0 0 0 14px rgba(255,180,84,0)}}
 #dot.beat{animation:flash .7s ease-out}
 aside{border-right:1px solid var(--line);background:var(--panel);overflow-y:auto;padding:12px;scrollbar-width:thin}
 #detail{border-right:none;border-left:1px solid var(--line)}
-main{position:relative;overflow:hidden;background:radial-gradient(ellipse 80% 60% at 50% 45%,#0b1220 0%,var(--bg) 70%)}
+main{position:relative;overflow:hidden;background:radial-gradient(ellipse 70% 55% at 50% 40%,#07110f 0%,var(--bg) 75%)}
 canvas{display:block;width:100%;height:100%;cursor:grab}
 canvas.drag{cursor:grabbing}
 canvas.over{cursor:pointer}
@@ -30,36 +30,39 @@ h2:first-child{margin-top:0}
 .row b{color:var(--ink);font-weight:500}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .task{border:1px solid var(--line);border-radius:6px;padding:7px 8px;margin-bottom:6px}
-.task .id{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--accent)}
+.task .id{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--amber)}
 .task .out{color:var(--dim);font-size:12px;margin-top:2px}
 .pill{font-size:10px;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
-.pill.active{color:var(--accent);border-color:var(--accent)}
+.pill.active{color:var(--amber);border-color:var(--amber)}
 .pill.blocked,.pill.failed{color:var(--bad);border-color:var(--bad)}
-.crumb{display:flex;flex-wrap:wrap;gap:4px;position:absolute;top:10px;left:10px;z-index:2;max-width:50%}
-.crumb button,.ctl button,.ctl label{background:rgba(13,17,25,.88);backdrop-filter:blur(6px);border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:inherit}
-.crumb button:hover,.ctl button:hover{color:var(--ink);border-color:var(--accent)}
-.ctl{position:absolute;top:10px;right:10px;z-index:2;display:flex;gap:6px;align-items:center}
-.ctl input[type=search]{background:rgba(13,17,25,.88);backdrop-filter:blur(6px);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:3px 8px;font:11px inherit;width:140px}
-.ctl label{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
-.ctl select{background:rgba(13,17,25,.88);border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:3px 6px;font:11px inherit}
-#tip{position:absolute;z-index:4;pointer-events:none;background:rgba(7,9,16,.94);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font:11px ui-monospace,Menlo,monospace;color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .12s;box-shadow:0 6px 22px rgba(0,0,0,.6)}
+#legend{position:absolute;top:12px;right:12px;z-index:2;background:rgba(10,15,14,.9);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px}
+#legend label{display:flex;align-items:center;gap:9px;padding:3px 0;cursor:pointer;color:var(--dim);white-space:nowrap}
+#legend label:hover{color:var(--ink)}
+#legend .swatch{width:26px;height:0;border-top-width:2px;border-top-style:solid;flex:none}
+#legend button{margin-top:8px;width:100%;background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:5px;font:11px inherit;cursor:pointer;letter-spacing:.1em}
+#legend button:hover{color:var(--ink);border-color:var(--amber)}
+.ctl{position:absolute;top:12px;left:12px;z-index:2;display:flex;gap:6px;align-items:center}
+.ctl input{background:rgba(10,15,14,.9);backdrop-filter:blur(8px);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:4px 9px;font:11px inherit;width:170px}
+.ctl button{background:rgba(10,15,14,.9);border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:4px 9px;font:11px inherit;cursor:pointer}
+.ctl button:hover{color:var(--ink);border-color:var(--amber)}
+#stats{position:absolute;right:14px;bottom:12px;z-index:2;color:var(--faint);font:11px ui-monospace,Menlo,monospace;text-align:right}
+#hint{position:absolute;left:14px;bottom:12px;z-index:2;color:var(--faint);font:10px ui-monospace,Menlo,monospace;line-height:1.7}
+#tip{position:absolute;z-index:4;pointer-events:none;background:rgba(5,8,7,.95);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font:11px ui-monospace,Menlo,monospace;color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .12s;box-shadow:0 6px 22px rgba(0,0,0,.7)}
 #tip.on{opacity:1}
 #tip .s{color:var(--faint);display:block;margin-top:2px}
 #empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--faint);font-size:12px;line-height:1.7}
-#legend{position:absolute;left:10px;bottom:10px;z-index:2;color:var(--faint);font-size:10px;line-height:1.7;font-family:ui-monospace,Menlo,monospace}
 .sym{display:flex;gap:7px;padding:2px 0;font-family:ui-monospace,Menlo,monospace;font-size:11px}
 .sym .k{color:var(--faint);width:60px;flex:none}
 .sym .n{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dep{display:flex;justify-content:space-between;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:2px 0;color:var(--dim);cursor:pointer}
 .dep:hover{color:var(--ink)}
 .dep span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
-.dep b{color:var(--accent);font-weight:500}
+.dep b{color:var(--amber);font-weight:500}
 .hint{color:var(--faint);font-size:11px;line-height:1.6}
 </style></head><body>
 <header>
   <h1>${escape(project)}</h1>
   <span class="tag" id="rev">—</span>
-  <span class="tag" id="scale">—</span>
   <span class="sep"></span>
   <span id="live"><span id="dot"></span><span id="livetext">connecting</span></span>
 </header>
@@ -68,239 +71,282 @@ h2:first-child{margin-top:0}
 
 <main>
   <canvas id="c"></canvas>
-  <div class="crumb" id="crumb"></div>
   <div class="ctl">
-    <input id="q" type="search" placeholder="filter" aria-label="Filter nodes">
-    <select id="depth" aria-label="Grouping depth"><option value="1">depth 1</option><option value="2">depth 2</option><option value="3" selected>depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option></select>
-    <label><input type="checkbox" id="ext"> externals</label>
-    <label><input type="checkbox" id="iso"> stray files</label>
-    <button id="reset">reset</button>
+    <input id="q" type="search" placeholder="filter paths" aria-label="Filter paths">
+    <button id="reset">reset view</button>
+  </div>
+  <div id="legend">
+    <label><input type="checkbox" id="e0" checked><span class="swatch" style="border-top-color:#ffd479"></span>calls</label>
+    <label><input type="checkbox" id="e1" checked><span class="swatch" style="border-top-color:#ffd479;border-top-style:dashed"></span>candidates</label>
+    <label><input type="checkbox" id="e2" checked><span class="swatch" style="border-top-color:#ff7a45"></span>inheritance</label>
+    <button id="refresh">&#8635; REFRESH</button>
   </div>
   <div id="tip"></div>
-  <div id="legend">drag to pan · scroll to zoom · drag a node to move it<br>click to inspect · double-click a directory to expand</div>
+  <div id="stats">—</div>
+  <div id="hint">drag to pan · scroll to zoom · hover a file to trace it<br>click to inspect · double-click to focus a directory</div>
   <div id="empty" hidden></div>
 </main>
 
-<aside id="detail"><div class="hint">Click a node to inspect it.<br>Double-click a directory to expand it.</div></aside>
+<aside id="detail"><div class="hint">Hover a file to light up what it calls.<br>Click to inspect it.</div></aside>
 
 <script>
 var $ = function (id) { return document.getElementById(id); };
 var canvas = $('c'), ctx = canvas.getContext('2d'), tip = $('tip');
 
-// Nodes persist across reloads by id, so changing depth or reindexing morphs the layout instead
-// of throwing it away and redrawing something unrecognisable.
-var nodes = new Map(), edges = [], meta = {}, expand = [];
-var view = { x: 0, y: 0, k: 1 }, fitted = false;
-var alpha = 0;              // simulation heat, reheated on every data change
-var selected = null, hovered = null, filter = '';
-var drag = null, pan = null;
-var neighbours = new Set();
-var clock = 0;
+var mapData = null;          // { files, edges, stats }
+var rects = [];              // one per file, in received order
+var pos = null;              // Float32Array of symbol x,y pairs, indexed by global symbol index
+var owner = null;            // Int32Array symbol index -> file index
+var view = { x: 0, y: 0, k: 1 };
+var pan = null, hovered = -1, focusPath = '', filter = '';
+var show = [true, true, true];   // calls, candidates, inheritance
+var pulse = 0, redrawTimer = null;
 
-// Deterministic: no Math.random anywhere, so the same index always settles the same way.
-function hueOf(id) { var h = 0, head = id.split('/')[0]; for (var i = 0; i < head.length; i++) h = (h * 31 + head.charCodeAt(i)) % 360; return h; }
-function radiusOf(files) { return Math.min(32, 4 + Math.log2(1 + (files || 1)) * 3); }
-
-function load() {
-  var params = new URLSearchParams({ depth: $('depth').value, expand: expand.join(','), externals: $('ext').checked ? '1' : '0', isolated: $('iso').checked ? '1' : '0' });
-  return fetch('/api/graph?' + params).then(function (r) { return r.json(); }).then(applyData);
-}
-
-function applyData(data) {
-  meta = data.meta || {};
-  $('rev').textContent = meta.revision ? meta.revision.slice(0, 8) : 'no revision';
-  $('scale').textContent = meta.missing ? 'no index' : meta.totalFiles + ' files · ' + meta.totalEdges + ' edges';
-  $('empty').hidden = !meta.missing;
-  if (meta.missing) $('empty').innerHTML = 'No index yet.<br>Run <code>genesis index &lt;repo&gt;</code> to build one.';
-
-  var incoming = new Map();
-  data.nodes.forEach(function (n, i) { incoming.set(n.id, { node: n, i: i }); });
-  Array.prototype.forEach.call(Array.from(nodes.keys()), function (id) { if (!incoming.has(id)) nodes.delete(id); });
-  var count = data.nodes.length;
-  incoming.forEach(function (entry, id) {
-    var existing = nodes.get(id);
-    if (existing) { existing.files = entry.node.files; existing.symbols = entry.node.symbols; existing.label = entry.node.label; existing.kind = entry.node.kind; existing.tr = radiusOf(entry.node.files); return; }
-    // Seed a new node near its parent, so expanding a directory grows outward from the one you
-    // opened rather than teleporting its children in from the edge of the world.
-    var parent = null, rest = id, cut = rest.lastIndexOf('/');
-    while (cut > 0 && !parent) { rest = rest.slice(0, cut); parent = nodes.get(rest) || null; cut = rest.lastIndexOf('/'); }
-    var angle = (entry.i / Math.max(1, count)) * Math.PI * 2;
-    var spread = parent ? 32 : 150 + (entry.i % 7) * 40;
-    nodes.set(id, {
-      id: id, label: entry.node.label, kind: entry.node.kind, files: entry.node.files, symbols: entry.node.symbols,
-      x: (parent ? parent.x : 0) + Math.cos(angle) * spread, y: (parent ? parent.y : 0) + Math.sin(angle) * spread,
-      vx: 0, vy: 0, r: 1, tr: radiusOf(entry.node.files), pulse: 0
-    });
+function fetchMap() {
+  return fetch('/api/map').then(function (r) { return r.json(); }).then(function (data) {
+    mapData = data;
+    $('rev').textContent = data.revision ? data.revision.slice(0, 8) : 'no revision';
+    $('empty').hidden = !data.missing;
+    if (data.missing) { $('empty').innerHTML = 'No index yet.<br>Run <code>genesis index &lt;repo&gt;</code> to build one.'; return; }
+    var s = data.stats;
+    $('stats').textContent = s.symbols + ' nodes, ' + s.calls + ' edges (+' + s.candidates + ' possible), ' + s.files + ' files';
+    buildLayout();
+    fit();
+    schedule(true);
   });
-  edges = data.edges.filter(function (e) { return nodes.has(e.source) && nodes.has(e.target); });
-  // First paint settles off-screen then frames the result; afterwards the layout keeps only enough
-  // heat to relax, or the graph drifts out of the view it was just fitted to.
-  if (!fitted && nodes.size) { for (var i = 0; i < 260; i++) step(1 - i / 260); fitted = true; alpha = 0.12; fit(); }
-  else alpha = 1;
-  recomputeNeighbours();
-  renderCrumb();
 }
 
-// One simulation step. O(n^2) repulsion is fine at the few hundred nodes an aggregated view
-// produces. ponytail: naive n-body, swap for Barnes-Hut only if a view exceeds ~800 nodes.
-function step(heat) {
-  var list = Array.from(nodes.values()), n = list.length, i, j;
-  for (i = 0; i < n; i++) {
-    var a = list[i];
-    for (j = i + 1; j < n; j++) {
-      var b = list[j];
-      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy || 0.01;
-      if (d2 > 400000) continue;
-      var d = Math.sqrt(d2);
-      // Repulsion scales with the pair's radii so large nodes clear proportional room.
-      var force = (2400 + 90 * (a.tr + b.tr)) / d2;
-      var fx = (dx / d) * force, fy = (dy / d) * force;
-      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+// --- treemap -----------------------------------------------------------------
+// Containment, not a force layout: a file's place on screen is its place in the tree, so the
+// picture is stable, and every symbol gets its own cell instead of being averaged into a blob.
+function buildTree(files, prefix) {
+  var root = { name: '', dirs: new Map(), files: [], value: 0 };
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    if (prefix && file.path.indexOf(prefix + '/') !== 0) continue;
+    var parts = file.path.split('/'), node = root;
+    for (var p = 0; p < parts.length - 1; p++) {
+      if (!node.dirs.has(parts[p])) node.dirs.set(parts[p], { name: parts[p], dirs: new Map(), files: [], value: 0 });
+      node = node.dirs.get(parts[p]);
     }
+    node.files.push({ index: i, file: file, value: Math.max(1, file.symbols.length) });
   }
-  for (i = 0; i < edges.length; i++) {
-    var edge = edges[i], s = nodes.get(edge.source), t = nodes.get(edge.target);
-    var ex = t.x - s.x, ey = t.y - s.y, ed = Math.hypot(ex, ey) || 0.01;
-    var rest = 100 + 140 / (1 + edge.weight);
-    var pull = (ed - rest) * 0.011 * Math.min(3, Math.log2(1 + edge.weight) + 1);
-    s.vx += (ex / ed) * pull; s.vy += (ey / ed) * pull;
-    t.vx -= (ex / ed) * pull; t.vy -= (ey / ed) * pull;
-  }
-  for (i = 0; i < n; i++) {
-    var node = list[i];
-    if (node === drag) { node.vx = 0; node.vy = 0; continue; }
-    node.vx -= node.x * 0.0016; node.vy -= node.y * 0.0016;
-    node.x += node.vx * heat; node.y += node.vy * heat;
-    node.vx *= 0.80; node.vy *= 0.80;
-  }
-  // Hard separation: springs alone still let discs overlap, and an overlapped node is unclickable.
-  for (var pass = 0; pass < 3; pass++) {
-    for (i = 0; i < n; i++) for (j = i + 1; j < n; j++) {
-      var p = list[i], q = list[j], gap = p.r + q.r + 9;
-      var ox = q.x - p.x, oy = q.y - p.y, od = Math.hypot(ox, oy) || 0.01;
-      if (od >= gap) continue;
-      var push = (gap - od) / 2, ux = ox / od, uy = oy / od;
-      if (p !== drag) { p.x -= ux * push; p.y -= uy * push; }
-      if (q !== drag) { q.x += ux * push; q.y += uy * push; }
+  (function value(node) {
+    var total = 0;
+    node.dirs.forEach(function (child) { total += value(child); });
+    for (var f = 0; f < node.files.length; f++) total += node.files[f].value;
+    node.value = total;
+    return total;
+  })(root);
+  return root;
+}
+
+// Squarified treemap: pack a row until adding the next item would make the worst aspect ratio
+// worse, then start a new row. Keeps cells near-square, which is what makes the grid readable.
+function squarify(items, rect, out) {
+  var free = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+  var total = 0, i;
+  for (i = 0; i < items.length; i++) total += items[i].value;
+  if (total <= 0 || free.w <= 0 || free.h <= 0) return;
+  var scale = (free.w * free.h) / total;
+  var row = [], rowValue = 0, cursor = 0;
+  var worst = function (row, side, sum) {
+    if (!row.length || side <= 0) return Infinity;
+    var max = -Infinity, min = Infinity;
+    for (var r = 0; r < row.length; r++) { var a = row[r].value * scale; if (a > max) max = a; if (a < min) min = a; }
+    var s2 = sum * scale;
+    return Math.max((side * side * max) / (s2 * s2), (s2 * s2) / (side * side * min));
+  };
+  while (cursor < items.length) {
+    var vertical = free.w >= free.h, side = vertical ? free.h : free.w;
+    var next = items[cursor];
+    if (!row.length || worst(row.concat([next]), side, rowValue + next.value) <= worst(row, side, rowValue)) {
+      row.push(next); rowValue += next.value; cursor += 1;
+      if (cursor < items.length) continue;
     }
+    var thickness = (rowValue * scale) / side, offset = 0;
+    for (i = 0; i < row.length; i++) {
+      var share = (row[i].value * scale) / thickness;
+      out(row[i], vertical
+        ? { x: free.x, y: free.y + offset, w: thickness, h: share }
+        : { x: free.x + offset, y: free.y, w: share, h: thickness });
+      offset += share;
+    }
+    if (vertical) { free.x += thickness; free.w -= thickness; } else { free.y += thickness; free.h -= thickness; }
+    row = []; rowValue = 0;
+  }
+}
+
+function place(node, rect, depth) {
+  var items = [];
+  node.dirs.forEach(function (child) { items.push({ value: child.value, dir: child }); });
+  for (var f = 0; f < node.files.length; f++) items.push(node.files[f]);
+  items.sort(function (a, b) { return b.value - a.value; });
+  squarify(items, rect, function (item, box) {
+    var pad = depth < 3 ? 3 : 1.5;
+    var inner = { x: box.x + pad, y: box.y + pad, w: Math.max(0, box.w - pad * 2), h: Math.max(0, box.h - pad * 2) };
+    if (item.dir) { item.dir.box = box; item.dir.depth = depth; boxes.push(item.dir); place(item.dir, inner, depth + 1); return; }
+    rects[item.index] = { x: inner.x, y: inner.y, w: inner.w, h: inner.h, file: item.file, index: item.index };
+  });
+}
+
+var boxes = [];
+function buildLayout() {
+  var w = 1400, h = 1000;      // world units; the camera scales this to the viewport
+  rects = new Array(mapData.files.length);
+  boxes = [];
+  var tree = buildTree(mapData.files, focusPath);
+  place(tree, { x: 0, y: 0, w: w, h: h }, 0);
+
+  // Symbol cells: a grid inside each file box, ordered the same way the server indexed them.
+  var count = 0, i;
+  for (i = 0; i < mapData.files.length; i++) count += mapData.files[i].symbols.length;
+  pos = new Float32Array(count * 2);
+  owner = new Int32Array(count);
+  var running = 0;
+  for (i = 0; i < mapData.files.length; i++) {
+    var symbols = mapData.files[i].symbols, rect = rects[i];
+    var n = symbols.length;
+    if (!rect || rect.w <= 0 || rect.h <= 0) { for (var m = 0; m < n; m++) { pos[(running + m) * 2] = -9999; pos[(running + m) * 2 + 1] = -9999; owner[running + m] = i; } running += n; continue; }
+    var cols = Math.max(1, Math.round(Math.sqrt(n * (rect.w / Math.max(0.001, rect.h)))));
+    var rows = Math.ceil(n / cols);
+    for (var s = 0; s < n; s++) {
+      var cx = rect.x + ((s % cols) + 0.5) * (rect.w / cols);
+      var cy = rect.y + (Math.floor(s / cols) + 0.5) * (rect.h / rows);
+      pos[(running + s) * 2] = cx; pos[(running + s) * 2 + 1] = cy;
+      owner[running + s] = i;
+    }
+    running += n;
   }
 }
 
 function fit() {
-  var list = Array.from(nodes.values());
-  if (!list.length) return;
-  var xs = list.map(function (n) { return n.x; }), ys = list.map(function (n) { return n.y; });
   var w = canvas.clientWidth, h = canvas.clientHeight;
-  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
-  var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
-  view.k = Math.min(w / Math.max(1, maxX - minX + 180), h / Math.max(1, maxY - minY + 180), 2.2);
-  view.x = w / 2 - ((maxX + minX) / 2) * view.k;
-  view.y = h / 2 - ((maxY + minY) / 2) * view.k;
+  view.k = Math.min(w / 1400, h / 1000) * 0.92;
+  view.x = (w - 1400 * view.k) / 2;
+  view.y = (h - 1000 * view.k) / 2;
 }
 
-function matches(node) { return !filter || node.id.toLowerCase().indexOf(filter) !== -1; }
-
-function recomputeNeighbours() {
-  neighbours = new Set();
-  var focus = hovered || selected;
-  if (!focus) return;
-  neighbours.add(focus);
-  for (var i = 0; i < edges.length; i++) {
-    if (edges[i].source === focus) neighbours.add(edges[i].target);
-    if (edges[i].target === focus) neighbours.add(edges[i].source);
-  }
-}
-
-// Quadratic curve bowed perpendicular to the run. Straight lines between many nodes read as a
-// mesh; a consistent bow keeps separate edges legible and gives the particles a path to follow.
-function control(s, t) {
-  var mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
-  var dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy) || 1;
-  return { x: mx + (-dy / d) * d * 0.11, y: my + (dx / d) * d * 0.11 };
-}
-function along(s, c, t, u) {
-  var v = 1 - u;
-  return { x: v * v * s.x + 2 * v * u * c.x + u * u * t.x, y: v * v * s.y + 2 * v * u * c.y + u * u * t.y };
-}
-
-function draw() {
-  var w = canvas.clientWidth, h = canvas.clientHeight;
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+// --- rendering ---------------------------------------------------------------
+var STAR_COUNT = 90;
+function stars() {
+  // Deterministic: a fixed lattice rather than Math.random, so the backdrop never shimmers
+  // between redraws.
   ctx.save();
-  ctx.translate(view.x, view.y);
-  ctx.scale(view.k, view.k);
-  var focus = hovered || selected;
-
-  for (var i = 0; i < edges.length; i++) {
-    var edge = edges[i], s = nodes.get(edge.source), t = nodes.get(edge.target);
-    if (!s || !t) continue;
-    var lit = focus && (edge.source === focus || edge.target === focus);
-    var dim = (focus && !lit) || (filter && !(matches(s) || matches(t)));
-    var c = control(s, t);
-    ctx.strokeStyle = lit ? 'rgba(94,234,212,.65)' : dim ? 'rgba(60,72,96,.10)' : 'rgba(110,126,158,.20)';
-    ctx.lineWidth = (lit ? 1.5 : 0.7) / view.k;
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.quadraticCurveTo(c.x, c.y, t.x, t.y);
-    ctx.stroke();
-
-    // Packets run source -> target, so which way a dependency points is visible at a glance
-    // instead of needing an arrowhead nobody can see at this zoom.
-    if (dim) continue;
-    var packets = lit ? 3 : 1;
-    for (var p = 0; p < packets; p++) {
-      var u = (clock * (lit ? 0.34 : 0.19) + p / packets + (i % 7) / 7) % 1;
-      var at = along(s, c, t, u);
-      ctx.globalAlpha = lit ? 0.95 : 0.4;
-      ctx.fillStyle = lit ? '#5eead4' : 'hsl(' + hueOf(edge.source) + ' 60% 68%)';
-      ctx.beginPath();
-      ctx.arc(at.x, at.y, (lit ? 2 : 1.3) / view.k, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
+  for (var i = 0; i < STAR_COUNT; i++) {
+    var x = ((i * 6547) % 1400), y = ((i * 3571) % 1000);
+    var p = ((i * 7919) % 100) / 100;
+    ctx.globalAlpha = 0.05 + p * 0.13;
+    ctx.fillStyle = '#cfe8e0';
+    ctx.fillRect(x, y, 1.2, 1.2);
   }
-
-  nodes.forEach(function (node) {
-    var on = matches(node), near = !focus || neighbours.has(node.id);
-    var hue = hueOf(node.id);
-    ctx.globalAlpha = on ? (near ? 1 : 0.22) : 0.12;
-    if (node.pulse > 0) {
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, node.r + (1 - node.pulse) * 26, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(94,234,212,' + (node.pulse * 0.55) + ')';
-      ctx.lineWidth = 1.5 / view.k;
-      ctx.stroke();
-    }
-    var glow = node.id === focus || node.pulse > 0;
-    if (glow) { ctx.shadowBlur = 22; ctx.shadowColor = 'rgba(94,234,212,.8)'; }
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
-    ctx.fillStyle = node.kind === 'file' ? 'hsl(' + hue + ' 42% 40%)' : 'hsl(' + hue + ' 58% 54%)';
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    if (node.id === selected) { ctx.strokeStyle = '#5eead4'; ctx.lineWidth = 2 / view.k; ctx.stroke(); }
-    if (view.k > 0.4 || glow || node.r > 12) {
-      ctx.globalAlpha = on ? (near ? 0.94 : 0.16) : 0.1;
-      ctx.fillStyle = '#e6ebf5';
-      ctx.font = Math.max(9, 11 / view.k) + 'px ui-sans-serif,system-ui';
-      ctx.textAlign = 'center';
-      ctx.fillText(node.label, node.x, node.y - node.r - 5 / view.k);
-    }
-    ctx.globalAlpha = 1;
-  });
   ctx.restore();
 }
 
-function frame() {
-  clock += 1 / 60;
-  if (alpha > 0.004) { step(alpha); alpha *= 0.982; }
-  nodes.forEach(function (node) {
-    node.r += (node.tr - node.r) * 0.12;                 // grow in rather than pop in
-    if (node.pulse > 0) node.pulse = Math.max(0, node.pulse - 0.012);
-  });
-  draw();
-  requestAnimationFrame(frame);
+function matches(path) { return !filter || path.toLowerCase().indexOf(filter) !== -1; }
+
+function draw(withEdges) {
+  var w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!mapData || mapData.missing) return;
+  ctx.save();
+  ctx.translate(view.x, view.y);
+  ctx.scale(view.k, view.k);
+  stars();
+
+  var lit = hovered >= 0 ? hovered : -1;
+
+  // Directory frames, faint and thin: structure you read past, not through.
+  for (var b = 0; b < boxes.length; b++) {
+    var box = boxes[b].box;
+    if (boxes[b].depth > 3) continue;
+    ctx.strokeStyle = 'rgba(255,180,84,' + (0.16 - boxes[b].depth * 0.03) + ')';
+    ctx.lineWidth = 0.6 / view.k;
+    ctx.strokeRect(box.x, box.y, box.w, box.h);
+  }
+
+  for (var i = 0; i < rects.length; i++) {
+    var rect = rects[i];
+    if (!rect || rect.w < 0.6 || rect.h < 0.6) continue;
+    var on = matches(rect.file.path), isLit = i === lit;
+    ctx.globalAlpha = on ? 1 : 0.15;
+    ctx.strokeStyle = isLit ? 'rgba(255,212,121,.95)' : 'rgba(255,180,84,.28)';
+    ctx.lineWidth = (isLit ? 1.6 : 0.5) / view.k;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    if (isLit) { ctx.fillStyle = 'rgba(255,180,84,.10)'; ctx.fillRect(rect.x, rect.y, rect.w, rect.h); }
+    ctx.globalAlpha = 1;
+  }
+
+  // Symbol cells.
+  var dot = Math.max(0.7, 1.6 / view.k);
+  ctx.fillStyle = 'rgba(255,196,120,.55)';
+  for (var s = 0; s < owner.length; s++) {
+    var x = pos[s * 2], y = pos[s * 2 + 1];
+    if (x < -1000) continue;
+    var fileIndex = owner[s];
+    var rect2 = rects[fileIndex];
+    if (!rect2 || rect2.w < 2 || rect2.h < 2) continue;
+    ctx.globalAlpha = matches(rect2.file.path) ? (fileIndex === lit ? 1 : 0.5) : 0.08;
+    ctx.fillRect(x - dot / 2, y - dot / 2, dot, dot);
+  }
+  ctx.globalAlpha = 1;
+
+  if (withEdges) drawEdges(lit);
+
+  // Directory labels last, so they sit above the filaments.
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  for (var d = 0; d < boxes.length; d++) {
+    var node = boxes[d];
+    if (node.depth > 2) continue;
+    var px = node.box.w * view.k;
+    if (px < 70) continue;
+    ctx.globalAlpha = 0.5 - node.depth * 0.1;
+    ctx.fillStyle = '#ffe9c4';
+    ctx.font = Math.max(8, (11 - node.depth) / view.k) + 'px ui-monospace,Menlo,monospace';
+    ctx.fillText(node.name, node.box.x + 3 / view.k, node.box.y + 2 / view.k);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+// Additive blending is what makes a dense bundle read as light: hundreds of nearly transparent
+// filaments overlapping sum into the bright core, exactly where the coupling is heaviest.
+function drawEdges(lit) {
+  var edges = mapData.edges;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineWidth = 0.5 / view.k;
+  for (var e = 0; e < edges.length; e++) {
+    var edge = edges[e], from = edge[0], to = edge[1], kind = edge[2], ambiguous = edge[3];
+    var band = kind === 1 ? 2 : ambiguous ? 1 : 0;
+    if (!show[band]) continue;
+    var ax = pos[from * 2], ay = pos[from * 2 + 1], bx = pos[to * 2], by = pos[to * 2 + 1];
+    if (ax < -1000 || bx < -1000) continue;
+    var touching = lit >= 0 && (owner[from] === lit || owner[to] === lit);
+    if (lit >= 0 && !touching) continue;
+    if (!matches(rects[owner[from]].file.path) && !matches(rects[owner[to]].file.path)) continue;
+    var alpha = touching ? 0.85 : (band === 1 ? 0.10 : 0.16);
+    ctx.strokeStyle = band === 2 ? 'rgba(255,122,69,' + alpha + ')' : 'rgba(255,206,120,' + alpha + ')';
+    if (band === 1) ctx.setLineDash([3 / view.k, 3 / view.k]); else ctx.setLineDash([]);
+    // Bow each filament perpendicular to its run so bundles fan out instead of stacking.
+    var mx = (ax + bx) / 2, my = (ay + by) / 2, dx = bx - ax, dy = by - ay;
+    var d = Math.hypot(dx, dy) || 1;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(mx + (-dy / d) * d * 0.16, my + (dx / d) * d * 0.16, bx, by);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Edges are the expensive part, so they are skipped while the camera is moving and drawn once
+// it settles. Panning stays responsive; the picture arrives a beat later.
+function schedule(now) {
+  draw(false);
+  clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(function () { draw(true); }, now ? 0 : 110);
 }
 
 function resize() {
@@ -313,72 +359,56 @@ function toWorld(event) {
   return { x: (event.clientX - rect.left - view.x) / view.k, y: (event.clientY - rect.top - view.y) / view.k };
 }
 function pick(event) {
-  var p = toWorld(event), found = null;
-  nodes.forEach(function (node) { if (Math.hypot(node.x - p.x, node.y - p.y) <= node.r + 5) found = node; });
-  return found;
+  var p = toWorld(event);
+  for (var i = 0; i < rects.length; i++) {
+    var r = rects[i];
+    if (r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return i;
+  }
+  return -1;
 }
 
-canvas.addEventListener('mousedown', function (e) {
-  var hit = pick(e);
-  if (hit) { drag = hit; alpha = Math.max(alpha, 0.35); }
-  else { pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; canvas.classList.add('drag'); }
-});
-addEventListener('mouseup', function () { drag = null; pan = null; canvas.classList.remove('drag'); });
+canvas.addEventListener('mousedown', function (e) { pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; canvas.classList.add('drag'); });
+addEventListener('mouseup', function () { pan = null; canvas.classList.remove('drag'); });
 addEventListener('mousemove', function (e) {
-  if (pan) { view.x = pan.vx + (e.clientX - pan.x); view.y = pan.vy + (e.clientY - pan.y); return; }
-  if (drag) { var p = toWorld(e); drag.x = p.x; drag.y = p.y; drag.vx = 0; drag.vy = 0; return; }
-  var hit = pick(e), id = hit ? hit.id : null;
-  canvas.classList.toggle('over', !!hit);
-  if (id !== hovered) { hovered = id; recomputeNeighbours(); }
-  if (hit) {
-    var rect = canvas.getBoundingClientRect();
+  if (pan) { view.x = pan.vx + (e.clientX - pan.x); view.y = pan.vy + (e.clientY - pan.y); schedule(); return; }
+  if (!rects.length) return;
+  var hit = pick(e);
+  canvas.classList.toggle('over', hit >= 0);
+  if (hit !== hovered) { hovered = hit; schedule(hit < 0 ? false : true); }
+  if (hit >= 0) {
+    var file = rects[hit].file, rect = canvas.getBoundingClientRect();
     tip.classList.add('on');
-    tip.innerHTML = hit.id + '<span class="s">' + hit.files + ' files · ' + hit.symbols + ' symbols · ' + hit.kind + '</span>';
+    tip.innerHTML = file.path + '<span class="s">' + file.symbols.length + ' symbols</span>';
     tip.style.left = Math.min(e.clientX - rect.left + 14, rect.width - tip.offsetWidth - 8) + 'px';
     tip.style.top = (e.clientY - rect.top + 14) + 'px';
   } else tip.classList.remove('on');
 });
-canvas.addEventListener('mouseleave', function () { hovered = null; recomputeNeighbours(); tip.classList.remove('on'); });
+canvas.addEventListener('mouseleave', function () { hovered = -1; tip.classList.remove('on'); schedule(); });
 canvas.addEventListener('wheel', function (e) {
   e.preventDefault();
   var p = toWorld(e), rect = canvas.getBoundingClientRect();
-  view.k = Math.max(0.06, Math.min(7, view.k * Math.exp(-e.deltaY * 0.0015)));
+  view.k = Math.max(0.05, Math.min(60, view.k * Math.exp(-e.deltaY * 0.0016)));
   view.x = e.clientX - rect.left - p.x * view.k;
   view.y = e.clientY - rect.top - p.y * view.k;
+  schedule();
 }, { passive: false });
-canvas.addEventListener('click', function (e) {
-  var hit = pick(e);
-  selected = hit ? hit.id : null;
-  recomputeNeighbours();
-  if (hit) inspect(hit.id);
-});
+canvas.addEventListener('click', function (e) { var hit = pick(e); if (hit >= 0) inspect(rects[hit].file.path); });
 canvas.addEventListener('dblclick', function (e) {
   var hit = pick(e);
-  if (!hit || hit.kind !== 'dir') return;
-  if (expand.indexOf(hit.id) === -1) expand.push(hit.id);
-  load();
+  if (hit < 0) return;
+  var parts = rects[hit].file.path.split('/');
+  focusPath = parts.slice(0, Math.max(1, parts.length - 1)).join('/');
+  buildLayout(); fit(); schedule(true);
 });
 
-function renderCrumb() {
-  var box = $('crumb');
-  box.innerHTML = expand.map(function (path) { return '<button data-collapse="' + path + '">' + path + ' &#10005;</button>'; }).join('');
-  Array.prototype.forEach.call(box.querySelectorAll('[data-collapse]'), function (button) {
-    button.onclick = function () {
-      var path = button.dataset.collapse;
-      expand = expand.filter(function (p) { return p !== path && p.indexOf(path + '/') !== 0; });
-      load();
-    };
-  });
-}
-
-function inspect(id) {
-  return fetch('/api/node?id=' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (data) {
+function inspect(path) {
+  return fetch('/api/node?id=' + encodeURIComponent(path)).then(function (r) { return r.json(); }).then(function (data) {
     var list = function (items, empty) {
       if (!items.length) return '<div class="hint">' + empty + '</div>';
-      return items.map(function (d) { return '<div class="dep" data-goto="' + d.target + '"><span>' + d.target + '</span><b>' + d.weight + '</b></div>'; }).join('');
+      return items.map(function (d) { return '<div class="dep"><span>' + d.target + '</span><b>' + d.weight + '</b></div>'; }).join('');
     };
     $('detail').innerHTML =
-      '<h2>Selected</h2><div class="mono" style="word-break:break-all;color:var(--accent)">' + id + '</div>' +
+      '<h2>Selected</h2><div class="mono" style="word-break:break-all;color:var(--amber)">' + path + '</div>' +
       '<div class="row"><span>files</span><b>' + data.files + '</b></div>' +
       '<div class="row"><span>symbols</span><b>' + data.symbolCount + '</b></div>' +
       '<h2>Depends on</h2>' + list(data.dependsOn, 'Nothing outside itself.') +
@@ -406,48 +436,28 @@ function loadState() {
   });
 }
 
-// Clicking a dependency in the panel flies to it on the canvas, so the graph and the detail view
-// drive each other instead of being two separate readings of the same index.
-$('detail').addEventListener('click', function (e) {
-  var row = e.target.closest ? e.target.closest('[data-goto]') : null;
-  if (!row) return;
-  var target = row.dataset.goto, node = nodes.get(target);
-  if (!node) node = nodes.get(target.split('/').slice(0, -1).join('/'));
-  if (!node) return;
-  selected = node.id;
-  recomputeNeighbours();
-  inspect(node.id);
-  view.x = canvas.clientWidth / 2 - node.x * view.k;
-  view.y = canvas.clientHeight / 2 - node.y * view.k;
-});
-
 var events = new EventSource('/events');
 events.onopen = function () { $('dot').classList.add('on'); $('livetext').textContent = 'live'; };
 events.onerror = function () { $('dot').classList.remove('on'); $('livetext').textContent = 'reconnecting'; };
 events.addEventListener('change', function () {
-  // Light the graph up when the repo moves underneath it, which is the point of watching it.
   $('dot').classList.remove('beat');
   void $('dot').offsetWidth;
   $('dot').classList.add('beat');
-  nodes.forEach(function (node) { node.pulse = 1; });
   loadState();
-  load();
+  fetchMap();
 });
 
-$('q').oninput = function (e) { filter = e.target.value.trim().toLowerCase(); };
-$('ext').onchange = load;
-$('iso').onchange = load;
-$('depth').onchange = function () { expand = []; load(); };
-$('reset').onclick = function () {
-  expand = []; selected = null; hovered = null; recomputeNeighbours();
-  load().then(function () { var settle = 0; var relax = setInterval(function () { step(0.6); if (++settle > 60) { clearInterval(relax); alpha = 0.1; fit(); } }, 8); });
-};
-addEventListener('resize', function () { resize(); fit(); });
+for (var band = 0; band < 3; band++) (function (b) {
+  $('e' + b).onchange = function () { show[b] = this.checked; schedule(true); };
+})(band);
+$('q').oninput = function (e) { filter = e.target.value.trim().toLowerCase(); schedule(); };
+$('refresh').onclick = function () { fetchMap(); };
+$('reset').onclick = function () { focusPath = ''; hovered = -1; buildLayout(); fit(); schedule(true); };
+addEventListener('resize', function () { resize(); fit(); schedule(); });
 
 resize();
 loadState();
-load();
-requestAnimationFrame(frame);
+fetchMap();
 </script></body></html>
 `;
 }

@@ -161,15 +161,98 @@ function jsSymbols(source) {
   }
   return found;
 }
-for (const path of files.filter(file => extname(file) !== '.py')) {
+// Import bindings: which local name refers to which exported name in which module. Needed to
+// resolve a call to a symbol in another file rather than guessing by name alone.
+const importClause = /^\s*import\s+([^'";]+?)\s+from\s*['"]([^'"]+)['"]/gm;
+function bindingsOf(clause) {
+  const found = [], named = clause.match(/\{([^}]*)\}/);
+  if (named) for (const part of named[1].split(',')) {
+    const match = part.trim().match(/^(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+    if (match) found.push({ local: match[2] || match[1], imported: match[1] });
+  }
+  const star = clause.match(/\*\s*as\s+([A-Za-z_$][\w$]*)/);
+  if (star) found.push({ local: star[1], imported: '*' });
+  const rest = clause.replace(/\{[^}]*\}/g, '').replace(/\*\s*as\s+[A-Za-z_$][\w$]*/g, '').replace(/^\s*type\s+/, '').trim();
+  const fallback = rest.match(/^([A-Za-z_$][\w$]*)/);
+  if (fallback) found.push({ local: fallback[1], imported: 'default' });
+  return found;
+}
+
+const CALL_KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await', 'new', 'delete', 'void', 'yield', 'super', 'this', 'import', 'require', 'do', 'else', 'in', 'of', 'instanceof', 'case', 'throw']);
+const callSite = /(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(/g;
+const extendsSite = /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:abstract\s+)?class\s+[A-Za-z_$][\w$]*(?:<[^>]*>)?\s+extends\s+([A-Za-z_$][\w$]*)/;
+
+const jsFiles = files.filter(file => extname(file) !== '.py');
+const sources = new Map(), fileSymbols = new Map(), fileImports = new Map();
+for (const path of jsFiles) {
   const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path));
+  sources.set(rel, source);
   let match; while ((match = jsImport.exec(source))) addDependency(path, match[1], source.slice(0, match.index).split('\n').length, 'javascript');
-  for (const { kind, name, line } of jsSymbols(source)) {
+  const symbols = jsSymbols(source);
+  fileSymbols.set(rel, symbols);
+  for (const { kind, name, line } of symbols) {
     const id = `symbol:${rel}#${kind}:${name}`;
     addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, extractor: 'conservative-js-symbols', contentHash: hash(`${kind}:${name}`) });
     addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, extractor: 'conservative-js-symbols' });
   }
+  const imports = new Map();
+  while ((match = importClause.exec(source))) {
+    const target = resolveJsImport(path, match[2]);
+    if (!target) continue;
+    const targetRel = posix(relative(root, target));
+    for (const binding of bindingsOf(match[1])) imports.set(binding.local, { file: targetRel, imported: binding.imported });
+  }
+  fileImports.set(rel, imports);
 }
+
+// Three tiers of truth, borrowed from Benzi's description: a call resolved to one definition is
+// proven; a call whose name matches several definitions keeps every candidate rather than being
+// collapsed into a confident guess; a call that resolves to nothing is counted, never invented.
+const byName = new Map();
+for (const [rel, symbols] of fileSymbols) for (const symbol of symbols) {
+  if (!byName.has(symbol.name)) byName.set(symbol.name, []);
+  byName.get(symbol.name).push(`symbol:${rel}#${symbol.kind}:${symbol.name}`);
+}
+const symbolId = (rel, name) => { const found = (fileSymbols.get(rel) || []).find(s => s.name === name); return found ? `symbol:${rel}#${found.kind}:${found.name}` : null; };
+let unresolvedCalls = 0;
+for (const path of jsFiles) {
+  const rel = posix(relative(root, path)), source = sources.get(rel), symbols = fileSymbols.get(rel);
+  if (!symbols || !symbols.length) continue;
+  const lines = source.split('\n'), imports = fileImports.get(rel);
+  // Each top-level declaration owns the lines up to the next one, which is enough to attribute a
+  // call to its enclosing symbol without building a scope tree.
+  for (let index = 0; index < symbols.length; index++) {
+    const symbol = symbols[index], from = `symbol:${rel}#${symbol.kind}:${symbol.name}`;
+    const end = index + 1 < symbols.length ? symbols[index + 1].line - 1 : lines.length;
+    const body = lines.slice(symbol.line - 1, end).join('\n');
+    const inherit = extendsSite.exec(lines[symbol.line - 1] || '');
+    if (inherit) {
+      const parent = imports.has(inherit[1]) ? symbolId(imports.get(inherit[1]).file, inherit[1]) : symbolId(rel, inherit[1]);
+      if (parent && parent !== from) addEdge({ type: 'inherits', source: from, target: parent, tier: 'proven', resolved: true, confidence: .8, extractor: 'conservative-js-calls' });
+    }
+    const seen = new Set();
+    let call; callSite.lastIndex = 0;
+    while ((call = callSite.exec(body))) {
+      const name = call[1];
+      if (CALL_KEYWORDS.has(name) || name === symbol.name || seen.has(name)) continue;
+      seen.add(name);
+      const local = symbolId(rel, name);
+      if (local) { addEdge({ type: 'calls', source: from, target: local, tier: 'proven', resolved: true, confidence: .75, extractor: 'conservative-js-calls' }); continue; }
+      const binding = imports.get(name);
+      if (binding) {
+        const target = symbolId(binding.file, binding.imported === 'default' || binding.imported === '*' ? name : binding.imported);
+        if (target) { addEdge({ type: 'calls', source: from, target, tier: 'proven', resolved: true, confidence: .7, extractor: 'conservative-js-calls' }); continue; }
+      }
+      const matches = byName.get(name);
+      if (matches && matches.length && matches.length <= 8) {
+        addEdge({ type: 'calls', source: from, target: matches[0], tier: 'ambiguous', candidates: matches.slice(0, 8), resolved: false, confidence: .3, extractor: 'conservative-js-calls' });
+        continue;
+      }
+      unresolvedCalls += 1;
+    }
+  }
+}
+sources.clear();
 
 const pythonFiles = files.filter(file => extname(file) === '.py');
 if (pythonFiles.length) {
@@ -182,7 +265,7 @@ if (pythonFiles.length) {
 const revisionResult = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
 const sortedNodes = [...nodes.values()].sort((a,b) => a.id.localeCompare(b.id)), sortedEdges = [...edges.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([, edge]) => edge);
 const sourceHash = hash(sortedNodes.filter(n => n.type === 'file').map(n => `${n.id}:${n.contentHash}`).join('\n'));
-const graph = { schemaVersion: 2, project: basename(root), revision: revisionResult.status === 0 ? revisionResult.stdout.trim() : null, sourceHash, provenance: { tool: 'genesis-graphizer', method: 'static-analysis', confidenceScale: '0..1' }, nodes: sortedNodes, edges: sortedEdges, warnings: warnings.sort() };
+const graph = { schemaVersion: 2, project: basename(root), revision: revisionResult.status === 0 ? revisionResult.stdout.trim() : null, sourceHash, provenance: { tool: 'genesis-graphizer', method: 'static-analysis', confidenceScale: '0..1' }, nodes: sortedNodes, edges: sortedEdges, warnings: warnings.sort(), stats: { unresolvedCalls } };
 const json = `${JSON.stringify(graph, null, 2)}\n`, escDot = value => String(value).replaceAll('\\','\\\\').replaceAll('"','\\"');
 const dot = `digraph genesis {\n  rankdir=LR;\n  node [shape=box,fontname="system-ui"];\n${sortedNodes.map(n => `  "${escDot(n.id)}" [label="${escDot(n.label)}",class="${n.type}"];`).join('\n')}\n${sortedEdges.map(e => `  "${escDot(e.source)}" -> "${escDot(e.target)}" [label="${e.type}"];`).join('\n')}\n}\n`;
 const esc = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');

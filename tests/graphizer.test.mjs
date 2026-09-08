@@ -113,3 +113,40 @@ test('extracts top-level declaration kinds without claiming nested ones', () => 
   assert.equal(symbols.get('Base'), 'class');
   assert(!symbols.has('nested'), 'declarations inside a function body must not be claimed');
 });
+
+test('resolves calls into proven and ambiguous tiers, and never invents the rest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-calls-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('src/util.ts', 'export function helper() {}\n');
+  write('src/other.ts', 'export function collide() {}\n');
+  write('src/third.ts', 'export function collide() {}\n');
+  write('src/base.ts', 'export class Base {}\n');
+  write('src/main.ts', [
+    "import { helper } from './util';",
+    "import { Base } from './base';",
+    'export function run() {',
+    '  helper();',            // imported, one definition -> proven
+    '  local();',             // same file -> proven
+    '  collide();',           // two definitions, not imported -> ambiguous, candidates kept
+    '  fetch();',             // nothing knows it -> counted, not invented
+    '}',
+    'export function local() {}',
+    'export class Child extends Base {}',
+  ].join('\n') + '\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const from = 'symbol:src/main.ts#function:run';
+  const call = (target) => graph.edges.find((e) => e.type === 'calls' && e.source === from && e.target === target);
+
+  assert.equal(call('symbol:src/util.ts#function:helper').tier, 'proven', 'call to an imported symbol');
+  assert.equal(call('symbol:src/main.ts#function:local').tier, 'proven', 'call within the same file');
+
+  const ambiguous = graph.edges.find((e) => e.type === 'calls' && e.source === from && e.tier === 'ambiguous');
+  assert(ambiguous, 'a name matching several definitions stays ambiguous');
+  assert.equal(ambiguous.candidates.length, 2, 'every candidate is kept rather than collapsed to a guess');
+  assert.equal(ambiguous.resolved, false);
+
+  assert(!graph.edges.some((e) => e.type === 'calls' && /fetch/.test(e.target)), 'an unknown call is never invented');
+  assert(graph.stats.unresolvedCalls > 0, 'unknown calls are counted');
+
+  assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/main.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
+});

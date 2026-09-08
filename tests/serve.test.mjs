@@ -100,3 +100,26 @@ test('hides stray leaf files but keeps directories and honours the toggle', asyn
   const split = await get('/api/graph?depth=2');
   assert.deepEqual(split.nodes.map((n) => n.label).sort(), ['src/api', 'src/ui']);
 });
+
+test('serves the symbol map with numeric edge endpoints', async (t) => {
+  const repo = project();
+  writeFileSync(join(repo, 'src', 'api', 'client.ts'), "import { format } from '../ui/format';\nexport const fetchUser = (id: string) => format(id);\n");
+  execFileSync(process.execPath, [join(root, 'tools', 'graphizer.mjs'), repo, '--write'], { stdio: 'ignore' });
+  const { child, base } = await start(repo);
+  t.after(() => child.kill());
+  const data = await (await fetch(base + '/api/map')).json();
+
+  // Files carry their own symbols; edges index into the flattened symbol order, which is what
+  // keeps the payload small enough to ship every symbol at once.
+  const paths = data.files.map((f) => f.path);
+  assert.deepEqual(paths, paths.slice().sort(), 'files arrive in a stable order the client can index against');
+  assert(data.files.some((f) => f.path === 'src/ui/format.ts' && f.symbols.some((s) => s.n === 'format')));
+  assert.equal(data.stats.files, data.files.length);
+  assert.equal(data.stats.symbols, data.files.reduce((total, f) => total + f.symbols.length, 0));
+
+  const flat = [];
+  data.files.forEach((f) => f.symbols.forEach((s) => flat.push(f.path + '#' + s.n)));
+  const call = data.edges.find((e) => flat[e[0]].indexOf('fetchUser') !== -1);
+  assert(call, 'the cross-file call is present');
+  assert.equal(flat[call[1]], 'src/ui/format.ts#format', 'and points at the definition it resolved to');
+});
