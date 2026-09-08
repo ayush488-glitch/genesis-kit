@@ -311,3 +311,17 @@ test('an existing task-only Genesis project can start specification explicitly',
   assert.ok(existsSync(join(repo, 'AGENTS.md')));
   assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
 });
+
+test('cleanup proposes only files with no incoming import edge', () => {
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'entry.ts'), "import { used } from './used.js';\nexport const entry = used;\n");
+  writeFileSync(join(repo, 'src', 'used.ts'), 'export const used = 1;\n');
+  writeFileSync(join(repo, 'src', 'orphan.ts'), 'export const orphan = 1;\n');
+  run(['init', repo, '--name', 'cleanup-fixture']);
+  run(['cleanup', repo]);
+  const proposed = state(repo).cleanup_proposals.map((entry) => entry.path);
+  // Guards the graph schema contract: cleanup reads edge.type/edge.target/node.type, which is what graphizer emits.
+  assert(proposed.includes('src/orphan.ts'), `expected orphan proposal, got ${JSON.stringify(proposed)}`);
+  assert(!proposed.includes('src/used.ts'), 'an imported file must never be proposed for deletion');
+});

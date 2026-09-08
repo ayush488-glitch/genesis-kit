@@ -13,20 +13,118 @@ if (outIndex !== -1 && !argv[outIndex + 1]) { console.error('--out needs a path'
 const outPath = resolve(outIndex < 0 ? join(root, '.genesis', 'index', 'graph.json') : argv[outIndex + 1]), outDir = dirname(outPath);
 const IGNORE = new Set(['.cache', '.genesis', '.git', '.next', '.turbo', '.venv', '__pycache__', 'build', 'coverage', 'dist', 'node_modules', 'out', 'target', 'venv']);
 const CODE = new Set(['.cjs', '.js', '.jsx', '.mjs', '.py', '.ts', '.tsx']);
+const CONFIGS = new Set(['jsconfig.json', 'tsconfig.json']);
 const JS_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'];
 const NODE_BUILTINS = new Set(builtinModules.map(name => name.replace(/^node:/, '')));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const posix = value => value.split(sep).join('/');
-function walk(dir, files = []) { for (const name of readdirSync(dir).sort()) { if (IGNORE.has(name) || name.startsWith('.DS')) continue; const path = join(dir, name); let stat; try { stat = lstatSync(path); } catch { continue; } if (stat.isSymbolicLink()) continue; if (stat.isDirectory()) walk(path, files); else if (CODE.has(extname(name))) files.push(path); } return files; }
-const files = walk(root), known = new Set(files), nodes = new Map(), edges = new Map(), warnings = [];
+function walk(dir, files = [], configs = []) { for (const name of readdirSync(dir).sort()) { if (IGNORE.has(name) || name.startsWith('.DS')) continue; const path = join(dir, name); let stat; try { stat = lstatSync(path); } catch { continue; } if (stat.isSymbolicLink()) continue; if (stat.isDirectory()) walk(path, files, configs); else if (CODE.has(extname(name))) files.push(path); else if (CONFIGS.has(name)) configs.push(path); } return { files, configs }; }
+const { files, configs } = walk(root), known = new Set(files), nodes = new Map(), edges = new Map(), warnings = [];
 const fileId = path => `file:${posix(relative(root, path))}`;
 const provenance = (extractor, source) => ({ extractor, source });
 const addNode = node => nodes.set(node.id, node);
 const addEdge = edge => { const id = `${edge.type}:${edge.source}->${edge.target}:${edge.specifier ?? ''}`; edges.set(id, { id, ...edge, contentHash: hash(id) }); };
 for (const path of files) { const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path)); addNode({ id: fileId(path), type: 'file', label: rel, path: rel, language: extname(path) === '.py' ? 'python' : 'javascript', confidence: 1, provenance: provenance('filesystem', rel), contentHash: hash(source) }); }
 
+// --- monorepo-aware resolution: JSONC configs, workspace packages, tsconfig path aliases ---
+// Comment and trailing-comma stripping is string-aware; a naive regex corrupts values containing "//" or ", }".
+function stripJsonc(text) {
+  let out = '', quote = '', escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i + 1];
+    if (quote) { out += ch; if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === quote) quote = ''; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; out += ch; continue; }
+    if (ch === '/' && next === '/') { while (i < text.length && text[i] !== '\n') i++; continue; }
+    if (ch === '/' && next === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++; i++; continue; }
+    if (ch === '}' || ch === ']') out = out.replace(/,\s*$/, '');
+    out += ch;
+  }
+  return out;
+}
+const readJsonc = path => { try { return JSON.parse(stripJsonc(readFileSync(path, 'utf8'))); } catch { return null; } };
+const tryCandidates = base => { const ext = extname(base), stem = ext && JS_EXTENSIONS.includes(ext) ? base.slice(0, -ext.length) : base; for (const suffix of JS_EXTENSIONS) for (const candidate of [base + suffix, stem + suffix, join(base, `index${suffix}`)]) if (known.has(candidate)) return candidate; };
+
+// '*' matches one directory segment, which is all workspace globs use in practice.
+function globDirs(pattern) {
+  let dirs = [root];
+  for (const part of pattern.split('/')) {
+    const next = [];
+    for (const dir of dirs) {
+      if (part !== '*') { const path = join(dir, part); if (existsSync(path)) next.push(path); continue; }
+      let entries = []; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries) if (entry.isDirectory() && !IGNORE.has(entry.name)) next.push(join(dir, entry.name));
+    }
+    dirs = next;
+  }
+  return dirs;
+}
+function workspacePatterns() {
+  const yaml = join(root, 'pnpm-workspace.yaml');
+  if (existsSync(yaml)) {
+    const found = []; let inPackages = false;
+    for (const line of readFileSync(yaml, 'utf8').split('\n')) {
+      if (/^packages:/.test(line)) { inPackages = true; continue; }
+      if (!inPackages) continue;
+      const item = line.match(/^\s+-\s*["']?([^"'#\s]+)/);
+      if (item) found.push(item[1]); else if (/^\S/.test(line)) inPackages = false;
+    }
+    if (found.length) return found;
+  }
+  const pkg = readJsonc(join(root, 'package.json')), workspaces = pkg && (Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages);
+  return Array.isArray(workspaces) ? workspaces : [];
+}
+const workspace = new Map();
+for (const pattern of workspacePatterns()) for (const dir of globDirs(pattern)) { const pkg = readJsonc(join(dir, 'package.json')); if (pkg?.name) workspace.set(pkg.name, { dir, exports: pkg.exports }); }
+
+// paths resolve against baseUrl when set, else against the directory of the config that declared them.
+function loadTsconfig(path, seen = new Set()) {
+  if (seen.has(path) || !existsSync(path)) return null;
+  seen.add(path);
+  const raw = readJsonc(path); if (!raw) return null;
+  const here = dirname(path);
+  let inherited = {};
+  if (typeof raw.extends === 'string') {
+    let target = raw.extends.startsWith('.') ? resolve(here, raw.extends) : null;
+    if (!target) { const name = packageName(raw.extends), pkg = workspace.get(name); if (pkg) target = join(pkg.dir, raw.extends.slice(name.length) || '.'); }
+    if (target) inherited = loadTsconfig(/\.json$/.test(target) ? target : `${target}.json`, seen) || {};
+  }
+  const options = raw.compilerOptions || {}, base = options.baseUrl ? resolve(here, options.baseUrl) : inherited.base;
+  return { dir: here, base, paths: options.paths ?? inherited.paths, pathsBase: options.paths ? (base ?? here) : inherited.pathsBase };
+}
+const tsconfigs = configs.map(path => loadTsconfig(path)).filter(config => config?.paths).sort((a, b) => b.dir.length - a.dir.length);
+const nearestTsconfig = from => tsconfigs.find(config => from === config.dir || from.startsWith(config.dir + sep));
+
+function resolveAlias(from, specifier) {
+  const config = nearestTsconfig(dirname(from));
+  if (!config) return;
+  for (const [pattern, targets] of Object.entries(config.paths)) {
+    const star = pattern.indexOf('*');
+    let tail = '';
+    if (star === -1) { if (pattern !== specifier) continue; }
+    else {
+      const head = pattern.slice(0, star), rest = pattern.slice(star + 1);
+      if (!specifier.startsWith(head) || !specifier.endsWith(rest) || specifier.length < head.length + rest.length) continue;
+      tail = specifier.slice(head.length, specifier.length - rest.length);
+    }
+    for (const target of targets) { const hit = tryCandidates(resolve(config.pathsBase, target.replace('*', tail))); if (hit) return hit; }
+  }
+}
+// Prefer the "types" condition: it points at source, while "default" points at unbuilt dist.
+function resolveWorkspace(specifier) {
+  const name = packageName(specifier), pkg = workspace.get(name);
+  if (!pkg) return;
+  const subpath = specifier.slice(name.length).replace(/^\//, '');
+  if (pkg.exports && typeof pkg.exports === 'object') {
+    const entry = pkg.exports[subpath ? `./${subpath}` : '.'];
+    const file = typeof entry === 'string' ? entry : entry && (entry.types || entry.import || entry.default);
+    if (typeof file === 'string') { const hit = tryCandidates(resolve(pkg.dir, file)); if (hit) return hit; }
+  }
+  return tryCandidates(join(pkg.dir, subpath || 'index')) ?? tryCandidates(join(pkg.dir, 'src', subpath || 'index'));
+}
+
 function packageName(specifier) { const parts = specifier.split('/'); return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]; }
-function resolveJsImport(from, specifier) { if (!specifier.startsWith('.') && !specifier.startsWith('/')) return null; const resolved = resolve(dirname(from), specifier), base = JS_EXTENSIONS.includes(extname(resolved)) ? resolved.slice(0, -extname(resolved).length) : resolved; for (const suffix of JS_EXTENSIONS) for (const candidate of [resolved + suffix, base + suffix, join(resolved, `index${suffix}`)]) if (known.has(candidate)) return candidate; }
+// undefined means "looked like local source but was not found"; null means "external package".
+function resolveJsImport(from, specifier) { if (specifier.startsWith('.') || specifier.startsWith('/')) return tryCandidates(resolve(dirname(from), specifier)); return resolveAlias(from, specifier) ?? resolveWorkspace(specifier) ?? null; }
 function resolvePythonImport(from, specifier) { const match = specifier.match(/^(\.+)(.*)$/); let base = match ? dirname(from) : root, module = match ? match[2] : specifier; if (match) for (let i = 1; i < match[1].length; i++) base = dirname(base); const path = join(base, ...module.split('.').filter(Boolean)); for (const candidate of [`${path}.py`, join(path, '__init__.py')]) if (known.has(candidate)) return candidate; return match ? undefined : null; }
 function addDependency(from, specifier, line, language, standard = false) {
   const target = language === 'javascript' ? resolveJsImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;

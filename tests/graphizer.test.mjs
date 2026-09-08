@@ -49,3 +49,33 @@ test('--out keeps compatibility and places sibling views beside JSON', () => {
   assert.equal(JSON.parse(readFileSync(out,'utf8')).schemaVersion, 1);
   assert.match(readFileSync(join(root, 'artifacts', 'graph.html'),'utf8'), /code graph/);
 });
+
+function monorepo() {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-mono-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/common/*"\n\ncatalogs:\n  frontend:\n    react: ^18\n');
+  // Trailing comma and comments: a naive JSONC strip breaks on these.
+  write('apps/web/tsconfig.json', '{\n  // app config\n  "compilerOptions": {\n    "paths": { "@/*": ["./src/*"] },\n  },\n}\n');
+  write('apps/web/src/lib/format.ts', 'export function format() {}\n');
+  write('apps/web/src/page.tsx', "import { format } from '@/lib/format';\nimport { shared } from '@scope/shared';\nimport { Button } from '@scope/ui/components/button';\nimport { schema } from '@scope/shared/schema';\nimport react from 'react';\n");
+  write('packages/common/shared/package.json', '{"name":"@scope/shared","exports":{".":{"types":"./src/index.ts","default":"./dist/index.js"},"./schema":{"types":"./src/schema.ts","default":"./dist/schema.js"}}}');
+  write('packages/common/shared/src/index.ts', 'export const shared = 1;\n');
+  write('packages/common/shared/src/schema.ts', 'export const schema = 1;\n');
+  write('packages/common/ui/package.json', '{"name":"@scope/ui"}');
+  write('packages/common/ui/src/components/button.tsx', 'export const Button = () => null;\n');
+  return root;
+}
+
+test('resolves tsconfig path aliases and workspace packages across a monorepo', () => {
+  const root = monorepo();
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = (specifier) => graph.edges.find((e) => e.specifier === specifier && e.source === 'file:apps/web/src/page.tsx');
+  assert.equal(edge('@/lib/format').target, 'file:apps/web/src/lib/format.ts', 'tsconfig "@/*" alias');
+  assert.equal(edge('@scope/shared').target, 'file:packages/common/shared/src/index.ts', 'workspace root via exports "types"');
+  assert.equal(edge('@scope/shared/schema').target, 'file:packages/common/shared/src/schema.ts', 'workspace exports subpath');
+  assert.equal(edge('@scope/ui/components/button').target, 'file:packages/common/ui/src/components/button.tsx', 'workspace subpath with no exports map, via src/');
+  for (const specifier of ['@/lib/format', '@scope/shared', '@scope/shared/schema', '@scope/ui/components/button']) assert.equal(edge(specifier).resolved, true, specifier);
+  // A genuine external stays external rather than being force-resolved.
+  assert.equal(edge('react').resolved, false);
+  assert(graph.nodes.some(({ id }) => id === 'package:npm:react'));
+});

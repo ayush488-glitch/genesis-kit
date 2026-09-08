@@ -1457,8 +1457,8 @@ function commandCleanup(parsed) {
   const path = join(genesisDir(repo), 'index', 'graph.json');
   if (!existsSync(path)) runGraphizer(repo);
   const graph = readJson(path);
-  const imported = new Set(graph.edges.filter((edge) => edge.kind === 'imports').map((edge) => edge.to));
-  const candidates = graph.nodes.filter((node) => node.kind === 'file' && /\.(m?[jt]sx?|cjs|py)$/.test(node.path || '') && !imported.has(node.id))
+  const imported = new Set(graph.edges.filter((edge) => edge.type === 'imports').map((edge) => edge.target));
+  const candidates = graph.nodes.filter((node) => node.type === 'file' && /\.(m?[jt]sx?|cjs|py)$/.test(node.path || '') && !imported.has(node.id))
     .filter((node) => !/(^|\/)(index|main|app|setup|conftest|test[^/]*)\.[^.]+$/.test(node.path));
   state.cleanup_proposals = candidates.map((node) => ({ path: node.path, reason: 'no incoming static import in the current approximate graph', confidence: 'low', action: 'review before deletion' }));
   saveState(repo, state, 'cleanup.proposed', { count: state.cleanup_proposals.length });
