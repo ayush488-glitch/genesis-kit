@@ -70,7 +70,8 @@ export function callees(graph, node, { limit = 50 } = {}) {
     ...(edge.candidates ? { candidates: edge.candidates } : {}),
   }));
 }
-export function defines(graph, prefix, { limit = 200 } = {}) {
+export function defines(graph, rawPrefix, { limit = 200 } = {}) {
+  const prefix = String(rawPrefix || '').replace(/\/+$/, '');
   const inside = (path) => path === prefix || path.startsWith(`${prefix}/`);
   return graph.nodes.filter((node) => node.type === 'symbol' && node.path && inside(node.path))
     .sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).slice(0, limit).map(describe);
@@ -97,7 +98,10 @@ export function impact(graph, node, { hops = 6, limit = 200 } = {}) {
 
 // What crosses the boundary of a file or directory. Used by the control panel's detail view and
 // by the context packet's scope cards, so both describe a scope the same way.
-export function boundary(graph, prefix, { limit = 20 } = {}) {
+export function boundary(graph, rawPrefix, { limit = 20 } = {}) {
+  // Tolerate a trailing slash: shell completion supplies one, and silently returning nothing for
+  // "src/" when "src" works is the kind of wart that reads as a broken tool.
+  const prefix = String(rawPrefix || '').replace(/\/+$/, '');
   const inside = (path) => path === prefix || path.startsWith(`${prefix}/`);
   const files = graph.nodes.filter((node) => node.type === 'file' && inside(node.path));
   const ids = new Set(files.map((node) => node.id));
@@ -205,6 +209,7 @@ const USAGE = `usage: node query.mjs <repo> <command> [args] [--json] [--limit N
 
   search <text>            symbols and files matching text
   defines <path>           symbols declared under a file or directory
+  scope <path>             what a file or directory depends on, and what depends on it
   callers <ref>            what calls this symbol
   callees <ref>            what this symbol calls
   impact <path>            what transitively imports this file (blast radius)
@@ -234,6 +239,7 @@ function main(argv) {
   let result;
   if (command === 'search') result = search(graph, rest.join(' '), options);
   else if (command === 'defines') result = defines(graph, rest[0], options);
+  else if (command === 'scope') result = boundary(graph, rest[0], options);
   else if (command === 'callers') result = callers(graph, one(rest[0]), options);
   else if (command === 'callees') result = callees(graph, one(rest[0]), options);
   else if (command === 'impact') result = impact(graph, one(rest[0]), options);
@@ -242,6 +248,15 @@ function main(argv) {
   else { console.error(USAGE); process.exit(1); }
 
   if (flags.json) { console.log(JSON.stringify(result, null, 2)); return; }
+  if (result && !Array.isArray(result)) {
+    console.log(`${result.prefix}: ${result.files} files, ${result.symbolCount} symbols`);
+    for (const [label, rows] of [['depends on', result.dependsOn], ['depended on by', result.dependedOnBy]]) {
+      console.log(`  ${label}:`);
+      for (const row of rows) console.log(`    ${row.target} (${row.weight})`);
+      if (!rows.length) console.log('    (nothing)');
+    }
+    return;
+  }
   if (!result.length) { console.log('(nothing)'); return; }
   for (const row of result) {
     if (row.from) { console.log(`${row.from} -[${row.type}${row.tier ? ` ${row.tier}` : ''}]-> ${row.to}`); continue; }

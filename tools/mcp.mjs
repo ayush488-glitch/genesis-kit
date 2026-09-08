@@ -2,7 +2,7 @@
 // MCP server over stdio. Exposes the same query surface the CLI uses, so an agent pulls answers
 // from the index on demand instead of receiving one fixed guess up front.
 // Read-only by construction: it holds no write path to project state.
-import { callees, callers, defines, impact, loadGraph, neighbours, path as shortestPath, resolveRef, search } from './query.mjs';
+import { boundary, callees, callers, defines, impact, loadGraph, neighbours, path as shortestPath, resolveRef, search } from './query.mjs';
 import { resolve } from 'node:path';
 
 const repo = resolve(process.argv[2] || '.');
@@ -21,6 +21,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { ref, limit }, required: ['ref'] } },
   { name: 'get_callees', description: 'What this symbol calls, with the same tiers.',
     inputSchema: { type: 'object', properties: { ref, limit }, required: ['ref'] } },
+  { name: 'get_scope', description: 'What a file or directory depends on and what depends on it, with counts. Works on a directory, unlike the symbol tools.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, limit }, required: ['path'] } },
   { name: 'get_impact', description: 'Blast radius: everything that transitively imports this file, with hop distance. Ask before editing.',
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, hops: { type: 'integer' }, limit }, required: ['path'] } },
   { name: 'get_neighbours', description: 'What sits within N hops of a node, in either direction.',
@@ -42,6 +44,7 @@ function call(name, args) {
   const options = { limit: args.limit, hops: args.hops };
   if (name === 'search_symbols') return search(graph, args.text, options);
   if (name === 'get_definitions') return defines(graph, args.path, options);
+  if (name === 'get_scope') return boundary(graph, args.path, options);
   if (name === 'get_impact') return impact(graph, one(graph, args.path).node, options);
   if (name === 'trace_path') {
     const from = one(graph, args.from), to = one(graph, args.to);

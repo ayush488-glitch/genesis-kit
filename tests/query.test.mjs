@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { callers, callees, defines, impact, loadGraph, path as shortestPath, resolveRef, search } from '../tools/query.mjs';
+import { boundary, callers, callees, defines, impact, loadGraph, path as shortestPath, resolveRef, search } from '../tools/query.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const graphizer = join(root, 'tools', 'graphizer.mjs'), cli = join(root, 'tools', 'query.mjs');
@@ -62,4 +62,21 @@ test('the CLI emits JSON and fails loudly on an unknown reference', () => {
   const out = execFileSync(process.execPath, [cli, repo, 'callers', 'src/util.ts#helper', '--json'], { encoding: 'utf8' });
   assert.deepEqual(JSON.parse(out).map((r) => r.name), ['serve']);
   assert.throws(() => execFileSync(process.execPath, [cli, repo, 'callers', 'nosuchsymbol'], { stdio: 'pipe' }));
+});
+
+test('scope answers for a directory, which the symbol tools cannot take', () => {
+  const repo = repoFixture();
+  const graph = loadGraph(repo);
+
+  // A directory is not a node, so resolveRef rightly finds nothing for it.
+  assert.equal(resolveRef(graph, 'src').length, 0);
+
+  // A trailing slash is tolerated; shell completion supplies one.
+  for (const prefix of ['src', 'src/']) assert.equal(boundary(graph, prefix).files, 4, 'boundary tolerates a trailing slash');
+
+  const out = execFileSync(process.execPath, [cli, repo, 'scope', 'src', '--json'], { encoding: 'utf8' });
+  const answer = JSON.parse(out);
+  assert.equal(answer.prefix, 'src');
+  assert.equal(answer.files, 4);
+  assert.equal(answer.dependsOn.length, 0, 'nothing outside src is imported');
 });

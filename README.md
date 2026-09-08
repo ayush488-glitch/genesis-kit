@@ -35,7 +35,7 @@ Genesis runs locally on **Node.js 18+ with no npm dependencies**. Coding hosts s
 | Specification and planning | Capture goals, acceptance criteria, scope, dependencies and human approval | `SPEC.md`, requirement-linked tasks and approval records |
 | Execution | Invoke one authorized host command under time and task limits | Attempt IDs, process identity, outcomes and stop reasons |
 | Verification | Bind executable checks and independent review to current inputs | Immutable evidence files and runtime receipts |
-| Continuation | Select relevant context and reconcile interrupted work | Checkpoints, blockers, scoped records and advisory graph edges |
+| Continuation | Select relevant context and reconcile interrupted work | Checkpoints, blockers, scoped records, scope cards and a symptom map |
 | Learning | Compare baseline/candidate behavior before adopting a rule | Experiment evidence, review, promotion and rollback records |
 
 The canonical record is `.genesis/project.json`. `KICKOFF.md`, `PLAN.md`, the dashboard and code graph are generated views. Raw redacted event traces stay in the ignored `.genesis/local/` directory.
@@ -52,6 +52,12 @@ The indexer is static, dependency-free and deliberately conservative about what 
 
 A Go, Rust, Java or Ruby project will index as an almost empty graph. That is a limit of the
 current extractors, not a configuration problem.
+
+Two further limits worth stating. JavaScript and TypeScript symbols are found by an anchored
+line scan, so a declaration must begin its own line; `import x from 'y'; export function z() {}`
+on one line yields no `z`. Formatted source is unaffected, generated or minified files are not.
+And a call whose target cannot be resolved to exactly one definition is either kept as an
+`ambiguous` edge carrying every candidate, or counted and discarded. It is never guessed.
 
 ## Local control panel
 
@@ -95,6 +101,63 @@ HTML file, preserves filters and navigation across refreshes, and adapts to narr
 buttons **copy CLI commands**; they do not execute commands or approve work. Rerun
 `genesis dashboard` after external source changes to recompute evidence freshness.
 
+## Query the index
+
+The index is not only drawn, it is asked. Every answer carries where it came from.
+
+```sh
+genesis query . search formatDate            # where does this name live
+genesis query . defines src/api              # what does this scope declare
+genesis query . callers "src/lib/utils.ts#cn"
+genesis query . callees loadUser
+genesis query . impact packages/db/src/index.ts   # what breaks if I change this
+genesis query . scope src/api                # a directory: in and out, with counts
+genesis query . neighbours src/api/users.ts --hops 2
+genesis query . path src/app.ts src/lib/format.ts
+genesis query . callers loadUser --json      # for scripts and agents
+```
+
+`impact` is the one to reach for before an edit: everything that transitively imports a file,
+with hop distance. On a real monorepo one shared package answered 2,296 files, which is the
+question a grep cannot answer.
+
+```
+$ genesis query . callers "apps/frontend/src/lib/utils.ts#cn" --limit 3
+IntegrationTile      function · proven   apps/frontend/src/components/api-integration/ApiIntegrationPagePreview.tsx:93
+LoadingSpinner       variable · proven   apps/frontend/src/components/appLayout/loading.tsx:3
+MenuItems            variable · proven   apps/frontend/src/components/appLayout/menuItems.tsx:68
+```
+
+`scope` accepts a directory; the symbol tools take a file or a symbol. A reference can be a node id, a file path, a bare symbol name, or `path#name`. When a bare name
+matches several definitions Genesis says so and names them rather than choosing for you:
+
+```
+$ genesis query . callers cn
+note: "cn" matches 4; using symbol:apps/comment-to-dm/src/lib/utils.ts#function:cn
+```
+
+Call results carry the tier the index resolved them at: `proven` when one definition matched, or
+`ambiguous` with the candidates that were not ruled out. An uncertain answer keeps looking
+uncertain at the point of use.
+
+## Expose the index to your agent
+
+```sh
+genesis mcp .        # JSON-RPC over stdio
+```
+
+The same questions become MCP tools: `search_symbols`, `get_definitions`, `get_scope`,
+`get_callers`, `get_callees`, `get_impact`, `get_neighbours`, `trace_path`. Register it with any MCP host:
+
+```json
+{ "mcpServers": { "genesis-index": { "command": "genesis", "args": ["mcp", "/path/to/repo"] } } }
+```
+
+This is the difference between a map and a tool. Genesis used to push one context packet and hope
+it had guessed right; an agent can now interrogate the index while it works, and ask again when
+the first answer changes the question. The server is read-only by construction and holds no write
+path to project state, so approvals and gates stay in the CLI where the audit trail is.
+
 ## Efficient context and reusable briefs
 
 ```sh
@@ -106,6 +169,13 @@ genesis context . --since FINGERPRINT   # Reuse only a full packet already recei
 ```
 
 The default packet is capped at 8,000 UTF-8 bytes. Optional knowledge is ranked and summarized, while applicable invariants and active rules remain intact. A required contract that cannot fit produces an explicit budget error. `--full --bytes 64000` requests full optional records when needed. The smaller kickoff points to the brief rather than asking agents to load the entire state file.
+
+When an index exists, the packet also carries two things read from it:
+
+- **Scope cards.** For each declared scope: what it declares, what it depends on, and what depends on it. A task that names `src/api` arrives knowing which files would break.
+- **A symptom map.** File paths, quoted strings and identifiers in the task text are resolved against the index before the agent reads anything, weighted so a named file outranks a bare word that merely looks like a symbol. The agent starts at a declaration rather than at a search.
+
+Both are marked `advisory`: static analysis is a hint, not an authority. Records are ordered by relevance band first and shared vocabulary only as a tie-break, so `included_because` keeps meaning what it says.
 
 The original [phase guides](recipes/README.md) make research, planning, implementation, verification and recovery reusable across coding hosts. They give smaller models explicit inputs, outputs and checks; capability improvement still needs evaluation. See the [review, measurements and experiment roadmap](docs/control-room-review.md). `npm run benchmark:context` reproduces payload measurements without a model call.
 

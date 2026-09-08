@@ -74,3 +74,15 @@ test('rejects an unknown method without dying', async () => {
   assert.equal(bad.error.code, -32601);
   assert.deepEqual(after.result, {}, 'still serving after a bad request');
 });
+
+test('get_scope answers for a directory', async () => {
+  const repo = fixture();
+  const [, response] = await converse(repo, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_scope', arguments: { path: 'src' } } },
+  ]);
+  const answer = body(response);
+  assert.equal(answer.prefix, 'src');
+  assert.equal(answer.files, 3);
+  assert(answer.symbolCount > 0);
+});
