@@ -160,8 +160,8 @@ Measured against sbl-app (351k LOC, 3.7k files) unless noted.
 - [x] incremental reindex, keyed on size and mtime rather than content hash
 - [x] source watcher: editing code reindexes and updates the panel with no command run
 - [x] symbol treemap view with call filaments and per-edge-kind toggles
-- [ ] `genesis query` CLI and the MCP surface
-- [ ] graph-aware context ranking, symptom map, scope cards
+- [x] `genesis query` CLI and the `genesis mcp` surface
+- [x] symptom map and scope cards in the context packet, plus shared-vocabulary tie-breaking
 - [ ] activity timeline from attempts/controls/traces
 - [ ] branch-to-branch graph diff
 
@@ -202,3 +202,22 @@ So the honest claim is a general-purpose upgrade for JavaScript, TypeScript and 
 Go, Rust, Java, Ruby and the rest index as an almost empty graph. Adding them means pluggable
 extractors, most likely tree-sitter, which is the largest remaining item and would end the
 zero-dependency property.
+
+## Phase 2, as built
+
+`genesis query` and `genesis mcp` both import `tools/query.mjs`, so the CLI, an agent and the
+context packet cannot drift into different answers about the same index. `boundary()` is shared
+with the control panel's detail view for the same reason; it replaced a second copy of that logic
+rather than adding a third.
+
+No query sidecar was built. Parsing the 13MB graph measures 57ms, so a one-shot CLI reads it
+directly and long-lived callers cache on size and mtime. The planned concern was real but the
+measurement retired it.
+
+The packet's raw advisory edges are gone. They carried node ids and confidences, which is not
+something an agent can act on; scope cards carry the same relationships as names, and the symptom
+map spends the same bytes pointing at declarations the task text already mentioned.
+
+What is still open: `references` and `exports` edges, the activity timeline from
+`attempts`/`controls`/traces, the branch-to-branch graph diff, and languages beyond JavaScript,
+TypeScript and Python.

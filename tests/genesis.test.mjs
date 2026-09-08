@@ -325,3 +325,33 @@ test('cleanup proposes only files with no incoming import edge', () => {
   assert(proposed.includes('src/orphan.ts'), `expected orphan proposal, got ${JSON.stringify(proposed)}`);
   assert(!proposed.includes('src/used.ts'), 'an imported file must never be proposed for deletion');
 });
+
+test('context carries scope cards and a symptom map resolved against the index', () => {
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'src', 'api'), { recursive: true });
+  mkdirSync(join(repo, 'src', 'lib'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'lib', 'format.ts'), 'export function formatName(v: string) { return v.trim(); }\n');
+  writeFileSync(join(repo, 'src', 'api', 'users.ts'), "import { formatName } from '../lib/format';\nexport function loadUser(id: string) { return formatName(id); }\n");
+  writeFileSync(join(repo, 'src', 'lib', 'page.ts'), "import { loadUser } from '../api/users';\nexport function page() { return loadUser('x'); }\n");
+  run(['init', repo, '--name', 'ctx-fixture']);
+  run(['task', 'add', repo, '--id', 'T1', '--outcome', 'loadUser throws on a missing id in src/api/users.ts', '--scope', 'src/api', '--gate', 'check:node -e 0']);
+
+  const packet = JSON.parse(run(['context', repo, 'T1', '--json']).stdout || run(['context', repo, 'T1']).stdout);
+
+  const card = packet.scope_cards.find((entry) => entry.scope === 'src/api');
+  assert(card, 'a card per declared scope');
+  assert(card.symbols.some((line) => line.includes('loadUser')), 'names what the scope declares');
+  assert.deepEqual(card.depends_on, ['src/lib/format.ts'], 'and what it reaches out to');
+  assert.deepEqual(card.depended_on_by, ['src/lib/page.ts'], 'and what would break');
+
+  // The task text is resolved to code before the agent reads anything.
+  const file = packet.symptoms.find((s) => s.id === 'file:src/api/users.ts');
+  assert(file, 'a path in the task text resolves to that file');
+  assert.equal(file.because, 'named a file');
+  assert.equal(file.weight, 3, 'a named file outweighs a bare identifier');
+  const symbol = packet.symptoms.find((s) => s.name === 'loadUser' && s.kind === 'function');
+  assert(symbol, 'a symbol named in the task text resolves to its declaration');
+  assert.equal(symbol.line, 2);
+  // Advisory, not authority: these are hints from static analysis, and say so.
+  for (const entry of [...packet.scope_cards, ...packet.symptoms]) assert.equal(entry.advisory, true);
+});

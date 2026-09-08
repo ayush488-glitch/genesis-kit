@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { boundary, defines, loadGraph, symptoms } from './query.mjs';
 import { tmpdir } from 'node:os';
 import { dashboardPage } from './dashboard.mjs';
 
@@ -1286,10 +1287,21 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
   const scopes = task?.scope || [], tags = new Set(task?.requirements || []);
   const relevance = record => record.paths?.some(path => scopes.some(scope => path === scope || path.startsWith(scope + '/') || scope.startsWith(path + '/'))) ? 2
     : record.tags?.some(tag => tags.has(tag)) ? 1 : !record.paths?.length && !record.tags?.length ? 0 : -1;
+  // Within a band, prefer records that share vocabulary with the task. A tie-break only: the
+  // bands still decide what is admissible, so `included_because` keeps meaning what it says.
+  const taskText = task ? [task.outcome, task.next_action, task.blocker, ...(task.scenarios || [])].filter(Boolean).join(' ') : '';
+  const taskWords = new Set(taskText.toLowerCase().match(/[a-z][a-z0-9_$]{3,}/g) || []);
+  const overlap = record => {
+    if (!taskWords.size) return 0;
+    const words = new Set(`${record.title || ''} ${record.text || ''}`.toLowerCase().match(/[a-z][a-z0-9_$]{3,}/g) || []);
+    let shared = 0;
+    for (const word of words) if (taskWords.has(word)) shared++;
+    return shared;
+  };
   const packet = { project: { name: state.project.name, objective: state.project.objective }, source_hash: digest(inputManifest(repo, task?.inputs)), environment_hash: digest(environment(task || {})), config_hash: task ? taskConfig(state, task) : null, task: task ? { id: task.id, outcome: task.outcome, state: task.state, risk: task.risk, owner: task.owner, dependencies: task.dependencies, inputs: task.inputs, environment: task.environment, scope: scopes, requirements: task.requirements,
     scenarios: task.scenarios || [], blocker: task.blocker, next_action: task.next_action,
     gates: task.gates.map(g => ({ id: g.id, command: g.command, status: proofStatus(repo, state, task, g), evidence: g.evidence })) } : null,
-    phase: state.lifecycle.phase, instruction: workflowInstruction(state), records: [], graph: [], attempts: [], authorizations: [], rules: [], omitted: 0 };
+    phase: state.lifecycle.phase, instruction: workflowInstruction(state), records: [], scope_cards: [], symptoms: [], attempts: [], authorizations: [], rules: [], omitted: 0 };
   if (options.stage) {
     if (!BRIEF_STAGES.includes(options.stage)) throw new Error(`stage must be ${BRIEF_STAGES.join('|')}`);
     packet.stage = options.stage;
@@ -1308,16 +1320,33 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
   for (const attempt of state.attempts.filter(a => a.task === task?.id).slice(-3).reverse()) add('attempts', { id: attempt.id, kind: attempt.kind, status: attempt.status, stop_reason: attempt.stop_reason });
   const candidates = ['decisions', 'knowledge', 'assumptions'].flatMap(type => (state[type] || []).map((record, index) => ({ type, record, index, score: relevance(record) })))
     .filter(({ record, score }) => typeof record === 'object' && record.status !== 'superseded' && score >= 0)
-    .sort((a, b) => b.score - a.score || b.index - a.index || a.type.localeCompare(b.type));
+    .map(entry => ({ ...entry, shared: overlap(entry.record) }))
+    .sort((a, b) => b.score - a.score || b.shared - a.shared || b.index - a.index || a.type.localeCompare(b.type));
   for (const { type, record, score } of candidates) {
     const entry = options.full ? { type, ...record } : { type, id: record.id, title: record.title, summary: excerpt(record.text), status: record.status, source: excerpt(record.source, 100), truncated: String(record.text || '').length > 280 };
     add('records', { ...entry, included_because: ['project context', 'requirement tag', 'task scope'][score] });
   }
-  const graphPath = join(genesisDir(repo), 'index', 'graph.json');
-  if (task && existsSync(graphPath)) {
-    const graph = readJson(graphPath), seeds = new Set(graph.nodes.filter(n => n.path && scopes.some(scope => n.path === scope || n.path.startsWith(scope + '/'))).map(n => n.id));
-    packet.graph_source_hash = graph.sourceHash;
-    for (const edge of graph.edges.filter(e => seeds.has(e.source) || seeds.has(e.target))) add('graph', { source: edge.source, target: edge.target, type: edge.type, resolved: edge.resolved, confidence: edge.confidence, advisory: true });
+  // Scope cards and a symptom map replace the raw edge dump that used to go here. Both are the
+  // same index read through query.mjs, so the packet, the CLI and the MCP tools agree.
+  if (task && existsSync(join(genesisDir(repo), 'index', 'graph.json'))) {
+    let graph = null;
+    try { graph = loadGraph(repo); } catch { graph = null; }
+    if (graph) {
+      packet.graph_source_hash = graph.sourceHash;
+      for (const scope of scopes) {
+        const edge = boundary(graph, scope, { limit: 8 });
+        add('scope_cards', {
+          scope,
+          files: edge.files,
+          symbols: defines(graph, scope, { limit: 20 }).map(symbol => `${symbol.kind} ${symbol.name} @${symbol.path}:${symbol.line}`),
+          depends_on: edge.dependsOn.map(row => row.target),
+          depended_on_by: edge.dependedOnBy.map(row => row.target),
+          advisory: true,
+        });
+      }
+      // Resolved before the agent reads anything, so it starts at code rather than at a search.
+      for (const site of symptoms(graph, taskText, { limit: 8 })) add('symptoms', { ...site, advisory: true });
+    }
   }
   packet.fingerprint = digest(packet);
   packet.metrics = { bytes: 0, estimated_tokens: 0, token_estimate: 'UTF-8 bytes / 4; model-dependent', budget_bytes: budget };

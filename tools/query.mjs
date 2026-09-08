@@ -5,13 +5,9 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const cache = new Map();
-export function loadGraph(repo) {
-  const path = join(resolve(repo), '.genesis', 'index', 'graph.json');
-  if (!existsSync(path)) throw new Error(`no index at ${path}; run: genesis index ${repo}`);
-  const { mtimeMs, size } = statSync(path), stamp = `${mtimeMs}:${size}`;
-  const hit = cache.get(path);
-  if (hit && hit.stamp === stamp) return hit.graph;
-  const graph = JSON.parse(readFileSync(path, 'utf8'));
+// Adjacency, added once so every helper can assume it. Exported because the panel parses the
+// graph itself and still needs the same shape.
+export function indexGraph(graph) {
   graph.byId = new Map(graph.nodes.map((node) => [node.id, node]));
   graph.out = new Map();
   graph.in = new Map();
@@ -21,6 +17,16 @@ export function loadGraph(repo) {
     graph.out.get(edge.source).push(edge);
     graph.in.get(edge.target).push(edge);
   }
+  return graph;
+}
+
+export function loadGraph(repo) {
+  const path = join(resolve(repo), '.genesis', 'index', 'graph.json');
+  if (!existsSync(path)) throw new Error(`no index at ${path}; run: genesis index ${repo}`);
+  const { mtimeMs, size } = statSync(path), stamp = `${mtimeMs}:${size}`;
+  const hit = cache.get(path);
+  if (hit && hit.stamp === stamp) return hit.graph;
+  const graph = indexGraph(JSON.parse(readFileSync(path, 'utf8')));
   cache.set(path, { stamp, graph });
   return graph;
 }
@@ -87,6 +93,50 @@ export function impact(graph, node, { hops = 6, limit = 200 } = {}) {
   seen.delete(node.id);
   return [...seen].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).slice(0, limit)
     .map(([id, distance]) => ({ ...describe(graph.byId.get(id)), distance }));
+}
+
+// What crosses the boundary of a file or directory. Used by the control panel's detail view and
+// by the context packet's scope cards, so both describe a scope the same way.
+export function boundary(graph, prefix, { limit = 20 } = {}) {
+  const inside = (path) => path === prefix || path.startsWith(`${prefix}/`);
+  const files = graph.nodes.filter((node) => node.type === 'file' && inside(node.path));
+  const ids = new Set(files.map((node) => node.id));
+  const symbolCount = graph.nodes.filter((node) => node.type === 'symbol' && node.path && inside(node.path)).length;
+  const label = (id) => id.replace(/^file:/, '');
+  const dependsOn = new Map(), dependedOnBy = new Map();
+  for (const edge of graph.edges) {
+    if (edge.type !== 'imports') continue;
+    if (ids.has(edge.source) && !ids.has(edge.target)) dependsOn.set(label(edge.target), (dependsOn.get(label(edge.target)) || 0) + 1);
+    if (ids.has(edge.target) && !ids.has(edge.source)) dependedOnBy.set(label(edge.source), (dependedOnBy.get(label(edge.source)) || 0) + 1);
+  }
+  const top = (counted) => [...counted.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([target, weight]) => ({ target, weight }));
+  return { prefix, files: files.length, symbolCount, dependsOn: top(dependsOn), dependedOnBy: top(dependedOnBy) };
+}
+
+// Resolve the names a task text mentions against the index, before the agent starts reading.
+// Weighted the way evidence actually differs: a file path in a traceback is worth more than a
+// quoted string, which is worth more than a bare identifier that merely looks like a symbol.
+const NOISE = new Set(['this', 'that', 'with', 'from', 'when', 'then', 'should', 'return', 'true', 'false', 'null', 'undefined', 'error', 'value', 'result', 'data', 'test', 'tests', 'const', 'function', 'class', 'async', 'await', 'string', 'number', 'object', 'array']);
+export function symptoms(graph, text, { limit = 12 } = {}) {
+  if (!text) return [];
+  const weights = new Map();
+  const bump = (name, weight, because) => {
+    const hit = weights.get(name);
+    if (!hit || hit.weight < weight) weights.set(name, { weight, because });
+  };
+  for (const match of text.matchAll(/[\w./-]+\.(?:m?[jt]sx?|cjs|py)(?::(\d+))?/g)) bump(match[0].split(':')[0], 3, 'named a file');
+  for (const match of text.matchAll(/["'`]([^"'`\n]{2,60})["'`]/g)) bump(match[1].trim(), 2, 'quoted');
+  for (const match of text.matchAll(/\b([A-Za-z_$][\w$]{3,})\b/g)) { const word = match[1]; if (!NOISE.has(word.toLowerCase())) bump(word, 1, 'named a symbol'); }
+
+  const sites = [];
+  for (const [name, { weight, because }] of weights) {
+    if (weight === 3) {
+      for (const node of graph.nodes) if (node.type === 'file' && (node.path === name || node.path.endsWith(`/${name}`))) sites.push({ ...describe(node), weight, because });
+      continue;
+    }
+    for (const node of graph.nodes) if (node.type === 'symbol' && node.name === name) sites.push({ ...describe(node), weight, because });
+  }
+  return sites.sort((a, b) => b.weight - a.weight || (a.path || '').localeCompare(b.path || '')).slice(0, limit);
 }
 
 export function neighbours(graph, node, { hops = 1, limit = 100, kinds = null } = {}) {
