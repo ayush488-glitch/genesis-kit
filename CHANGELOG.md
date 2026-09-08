@@ -4,7 +4,7 @@
 
 Review follow-ups (#13-#20):
 
-- Surface ambiguity everywhere a reference is resolved, not only in the symbol tools. `get_impact` and `trace_path` return `resolved`/`also_matched`, and `genesis query --json` carries it too; a note on stderr was invisible to the callers most likely to act on the wrong symbol.
+- Surface ambiguity everywhere a reference is resolved, not only in the symbol tools, and record it per reference so a two-endpoint query like `path` cannot lose one end. `get_impact` and `trace_path` return `resolved`/`also_matched`, and `genesis query --json` carries it too; a note on stderr was invisible to the callers most likely to act on the wrong symbol.
 - Reject unregistered MCP tool names. An unknown name previously fell through to `get_neighbours` and returned a confident wrong answer.
 - Stop calling `process.exit` when MCP stdin closes; a queued response on a pipe could be discarded before it flushed.
 - Publish graph artifacts atomically (temp file then rename) and reindex through `genesis index`, which takes the repository write lock. A concurrent reader could previously parse a half-written `graph.json`.

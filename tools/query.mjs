@@ -234,13 +234,15 @@ function main(argv) {
   const graph = loadGraph(repo);
   const options = { limit: Number(flags.limit) || undefined, hops: Number(flags.hops) || undefined };
   // Ambiguity is recorded, not only printed: a note on stderr is invisible to anything reading
-  // --json, which is exactly the caller most likely to act on the wrong symbol.
-  let ambiguous = null;
+  // --json, which is exactly the caller most likely to act on the wrong symbol. Recorded per
+  // reference, because `path` resolves two and one of them overwriting the other loses the fact
+  // that the source was ambiguous at all.
+  const ambiguous = [];
   const one = (ref) => {
     const found = resolveRef(graph, ref);
     if (!found.length) throw new Error(`nothing matches "${ref}"; try: query <repo> search ${ref}`);
     if (found.length > 1) {
-      ambiguous = found.map((node) => node.id);
+      ambiguous.push({ ref, resolved: found[0].id, also_matched: found.map((node) => node.id) });
       console.error(`note: "${ref}" matches ${found.length}; using ${found[0].id}. Pass a unique id or path#name to choose.`);
     }
     return found[0];
@@ -258,7 +260,7 @@ function main(argv) {
   else { console.error(USAGE); process.exit(1); }
 
   if (flags.json) {
-    console.log(JSON.stringify(ambiguous ? { resolved: ambiguous[0], also_matched: ambiguous, results: result } : result, null, 2));
+    console.log(JSON.stringify(ambiguous.length ? { ambiguous, results: result } : result, null, 2));
     return;
   }
   if (result && !Array.isArray(result)) {

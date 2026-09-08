@@ -92,13 +92,32 @@ test('a missing node yields an identifiable row rather than crashing the printer
   assert.notEqual(describe(undefined, 'x').name, undefined);
 });
 
-test('--json carries ambiguity, since a note on stderr is invisible to a parser', () => {
+test('--json carries ambiguity for every reference it resolved', () => {
   const repo = repoFixture();
-  const ambiguous = JSON.parse(execFileSync(process.execPath, [cli, repo, 'callers', 'helper', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
-  assert.equal(ambiguous.also_matched.length, 2, 'both definitions are named');
-  assert(Array.isArray(ambiguous.results), 'and the answer is still there');
+  const one = JSON.parse(execFileSync(process.execPath, [cli, repo, 'callers', 'helper', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  assert.equal(one.ambiguous.length, 1);
+  assert.equal(one.ambiguous[0].ref, 'helper');
+  assert.equal(one.ambiguous[0].also_matched.length, 2, 'both definitions are named');
+  assert(Array.isArray(one.results), 'and the answer is still there');
 
   // An unambiguous reference keeps the plain array shape.
   const plain = JSON.parse(execFileSync(process.execPath, [cli, repo, 'callers', 'src/util.ts#helper', '--json'], { encoding: 'utf8' }));
   assert(Array.isArray(plain));
+});
+
+test('a two-reference query reports both endpoints, not just the last one', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'genesis-twoends-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(repo, rel)), { recursive: true }); writeFileSync(join(repo, rel), body); };
+  write('src/o1.ts', 'export function omega() {}\n');
+  write('src/o2.ts', 'export function omega() {}\n');
+  write('src/a1.ts', 'import { omega } from "./o1";\n\nexport function alpha() {\n  omega();\n}\n');
+  write('src/a2.ts', 'export function alpha() {}\n');
+  execFileSync(process.execPath, [graphizer, repo, '--write'], { stdio: 'ignore' });
+
+  const answer = JSON.parse(execFileSync(process.execPath, [cli, repo, 'path', 'alpha', 'omega', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  // Recording ambiguity in one slot let the destination overwrite the source, so a caller could
+  // not tell that the path it received started from a guess.
+  assert.deepEqual(answer.ambiguous.map((entry) => entry.ref).sort(), ['alpha', 'omega']);
+  for (const entry of answer.ambiguous) assert.equal(entry.also_matched.length, 2);
+  assert.equal(answer.results.length, 1);
 });
