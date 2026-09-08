@@ -21,10 +21,10 @@ const posix = value => value.split(sep).join('/');
 function walk(dir, files = [], configs = []) { for (const name of readdirSync(dir).sort()) { if (IGNORE.has(name) || name.startsWith('.DS')) continue; const path = join(dir, name); let stat; try { stat = lstatSync(path); } catch { continue; } if (stat.isSymbolicLink()) continue; if (stat.isDirectory()) walk(path, files, configs); else if (CODE.has(extname(name))) files.push(path); else if (CONFIGS.has(name)) configs.push(path); } return { files, configs }; }
 const { files, configs } = walk(root), known = new Set(files), nodes = new Map(), edges = new Map(), warnings = [];
 const fileId = path => `file:${posix(relative(root, path))}`;
-const provenance = (extractor, source) => ({ extractor, source });
 const addNode = node => nodes.set(node.id, node);
-const addEdge = edge => { const id = `${edge.type}:${edge.source}->${edge.target}:${edge.specifier ?? ''}`; edges.set(id, { id, ...edge, contentHash: hash(id) }); };
-for (const path of files) { const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path)); addNode({ id: fileId(path), type: 'file', label: rel, path: rel, language: extname(path) === '.py' ? 'python' : 'javascript', confidence: 1, provenance: provenance('filesystem', rel), contentHash: hash(source) }); }
+// Keyed by a derivable identity so edges dedupe and sort deterministically without storing it.
+const addEdge = edge => edges.set(`${edge.type}:${edge.source}->${edge.target}:${edge.specifier ?? ''}`, edge);
+for (const path of files) { const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path)); addNode({ id: fileId(path), type: 'file', label: rel, path: rel, language: extname(path) === '.py' ? 'python' : 'javascript', confidence: 1, extractor: 'filesystem', contentHash: hash(source) }); }
 
 // --- monorepo-aware resolution: JSONC configs, workspace packages, tsconfig path aliases ---
 // Comment and trailing-comma stripping is string-aware; a naive regex corrupts values containing "//" or ", }".
@@ -129,11 +129,11 @@ function resolvePythonImport(from, specifier) { const match = specifier.match(/^
 function addDependency(from, specifier, line, language, standard = false) {
   const target = language === 'javascript' ? resolveJsImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
   const confidence = .85;
-  if (target) return addEdge({ type: 'imports', source, target: fileId(target), specifier, line, resolved: true, confidence, provenance: provenance(extractor, rel) });
+  if (target) return addEdge({ type: 'imports', source, target: fileId(target), specifier, line, resolved: true, confidence, extractor: extractor });
   const name = packageName(specifier.replace(/^node:|^\.+/, ''));
-  if (standard || (language === 'javascript' && NODE_BUILTINS.has(name))) { const id = `runtime:${language}:${name}`; addNode({ id, type: 'runtime', label: name, language, confidence, provenance: provenance('standard-library', rel), contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: true, confidence, provenance: provenance(extractor, rel) }); }
-  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, provenance: provenance('import', rel), contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .5, provenance: provenance(extractor, rel) }); }
-  const id = `unresolved:${rel}:${specifier}`; addNode({ id, type: 'unresolved', label: specifier, confidence: .4, provenance: provenance('import', rel), contentHash: hash(id) }); addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .4, provenance: provenance(extractor, rel) });
+  if (standard || (language === 'javascript' && NODE_BUILTINS.has(name))) { const id = `runtime:${language}:${name}`; addNode({ id, type: 'runtime', label: name, language, confidence, extractor: 'standard-library', contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: true, confidence, extractor: extractor }); }
+  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, extractor: 'import', contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .5, extractor: extractor }); }
+  const id = `unresolved:${rel}:${specifier}`; addNode({ id, type: 'unresolved', label: specifier, confidence: .4, extractor: 'import', contentHash: hash(id) }); addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .4, extractor: extractor });
 }
 
 const jsImport = /^\s*(?:import\s+(?:[^'";]*?\s+from\s*)?|export\s+[^'";]*?\s+from\s*|(?:(?:const|let|var)\s+[\w${}, ]+\s*=\s*)?require\s*\(\s*)['"]([^'"]+)['"]/gm;
@@ -166,8 +166,8 @@ for (const path of files.filter(file => extname(file) !== '.py')) {
   let match; while ((match = jsImport.exec(source))) addDependency(path, match[1], source.slice(0, match.index).split('\n').length, 'javascript');
   for (const { kind, name, line } of jsSymbols(source)) {
     const id = `symbol:${rel}#${kind}:${name}`;
-    addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, provenance: provenance('conservative-js-symbols', rel), contentHash: hash(`${kind}:${name}`) });
-    addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, provenance: provenance('conservative-js-symbols', rel) });
+    addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, extractor: 'conservative-js-symbols', contentHash: hash(`${kind}:${name}`) });
+    addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, extractor: 'conservative-js-symbols' });
   }
 }
 
@@ -176,13 +176,13 @@ if (pythonFiles.length) {
   const script = `import ast,json,sys\nr=[]\nclass Scan(ast.NodeVisitor):\n def __init__(self): self.imports=[]; self.symbols=[]; self.scope=[]\n def visit_Import(self,n): self.imports += [{'specifier':a.name,'line':n.lineno,'standard':a.name.split('.')[0] in sys.stdlib_module_names} for a in n.names]\n def visit_ImportFrom(self,n): self.imports.append({'specifier':'.'*n.level+(n.module or ''),'line':n.lineno,'standard':n.level==0 and (n.module or '').split('.')[0] in sys.stdlib_module_names})\n def symbol(self,n,kind):\n  q='.'.join(self.scope+[n.name]); self.symbols.append({'name':n.name,'qualifiedName':q,'kind':kind,'line':n.lineno}); self.scope.append(n.name); self.generic_visit(n); self.scope.pop()\n def visit_ClassDef(self,n): self.symbol(n,'class')\n def visit_FunctionDef(self,n): self.symbol(n,'function')\n def visit_AsyncFunctionDef(self,n): self.symbol(n,'function')\nfor p in json.load(sys.stdin):\n try:\n  s=Scan(); s.visit(ast.parse(open(p,encoding='utf-8').read(),filename=p)); r.append({'path':p,'imports':s.imports,'symbols':s.symbols})\n except (OSError,SyntaxError) as e: r.append({'path':p,'error':str(e)})\nprint(json.dumps(r))`;
   const parsed = spawnSync('python3', ['-c', script], { input: JSON.stringify(pythonFiles), encoding: 'utf8' });
   if (parsed.status !== 0) warnings.push(`Python AST unavailable: ${(parsed.stderr || 'python3 failed').trim()}`);
-  else for (const result of JSON.parse(parsed.stdout)) { if (result.error) { warnings.push(`${posix(relative(root, result.path))}: ${result.error}`); continue; } for (const item of result.imports) addDependency(result.path, item.specifier, item.line, 'python', item.standard); for (const item of result.symbols) { const rel = posix(relative(root, result.path)), id = `symbol:${rel}#${item.kind}:${item.qualifiedName}`; addNode({ id, type: 'symbol', ...item, label: item.qualifiedName, path: rel, confidence: 1, provenance: provenance('python-stdlib-ast', rel), contentHash: hash(`${item.kind}:${item.qualifiedName}`) }); addEdge({ type: 'defines', source: fileId(result.path), target: id, line: item.line, resolved: true, confidence: 1, provenance: provenance('python-stdlib-ast', rel) }); } }
+  else for (const result of JSON.parse(parsed.stdout)) { if (result.error) { warnings.push(`${posix(relative(root, result.path))}: ${result.error}`); continue; } for (const item of result.imports) addDependency(result.path, item.specifier, item.line, 'python', item.standard); for (const item of result.symbols) { const rel = posix(relative(root, result.path)), id = `symbol:${rel}#${item.kind}:${item.qualifiedName}`; addNode({ id, type: 'symbol', ...item, label: item.qualifiedName, path: rel, confidence: 1, extractor: 'python-stdlib-ast', contentHash: hash(`${item.kind}:${item.qualifiedName}`) }); addEdge({ type: 'defines', source: fileId(result.path), target: id, line: item.line, resolved: true, confidence: 1, extractor: 'python-stdlib-ast' }); } }
 }
 
 const revisionResult = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-const sortedNodes = [...nodes.values()].sort((a,b) => a.id.localeCompare(b.id)), sortedEdges = [...edges.values()].sort((a,b) => a.id.localeCompare(b.id));
+const sortedNodes = [...nodes.values()].sort((a,b) => a.id.localeCompare(b.id)), sortedEdges = [...edges.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([, edge]) => edge);
 const sourceHash = hash(sortedNodes.filter(n => n.type === 'file').map(n => `${n.id}:${n.contentHash}`).join('\n'));
-const graph = { schemaVersion: 1, project: basename(root), revision: revisionResult.status === 0 ? revisionResult.stdout.trim() : null, sourceHash, provenance: { tool: 'genesis-graphizer', method: 'static-analysis', confidenceScale: '0..1' }, nodes: sortedNodes, edges: sortedEdges, warnings: warnings.sort() };
+const graph = { schemaVersion: 2, project: basename(root), revision: revisionResult.status === 0 ? revisionResult.stdout.trim() : null, sourceHash, provenance: { tool: 'genesis-graphizer', method: 'static-analysis', confidenceScale: '0..1' }, nodes: sortedNodes, edges: sortedEdges, warnings: warnings.sort() };
 const json = `${JSON.stringify(graph, null, 2)}\n`, escDot = value => String(value).replaceAll('\\','\\\\').replaceAll('"','\\"');
 const dot = `digraph genesis {\n  rankdir=LR;\n  node [shape=box,fontname="system-ui"];\n${sortedNodes.map(n => `  "${escDot(n.id)}" [label="${escDot(n.label)}",class="${n.type}"];`).join('\n')}\n${sortedEdges.map(e => `  "${escDot(e.source)}" -> "${escDot(e.target)}" [label="${e.type}"];`).join('\n')}\n}\n`;
 const esc = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
