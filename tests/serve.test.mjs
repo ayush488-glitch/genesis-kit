@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -21,6 +21,36 @@ function project() {
 }
 
 // Resolves once the server prints the loopback URL it actually bound, so the test never guesses a port.
+// Recursive fs.watch is unsupported on Linux before Node 20.13. serve.mjs degrades with a message
+// there, which is the documented behaviour, so the watcher tests report the platform limit rather
+// than failing on it.
+function recursiveWatchWorks() {
+  const probe = mkdtempSync(join(tmpdir(), 'genesis-watch-probe-'));
+  try { watch(probe, { recursive: true }).close(); return true; } catch { return false; }
+}
+const watchable = recursiveWatchWorks();
+const noWatch = watchable ? false : 'recursive fs.watch is unavailable on this platform/runtime';
+
+// SSE frames do not align with read boundaries: one read can carry several frames, or half of one.
+// Accumulate across reads and match the buffer, under a single deadline for the whole wait.
+async function waitForFrames(reader, patterns, ms = 15000) {
+  const decoder = new TextDecoder();
+  const deadline = Date.now() + ms;
+  let buffer = '';
+  let timer;
+  const expired = new Promise((resolve) => { timer = setTimeout(() => resolve({ timedOut: true }), ms); });
+  try {
+    while (Date.now() < deadline) {
+      if (patterns.every((pattern) => buffer.includes(pattern))) return buffer;
+      const next = await Promise.race([reader.read(), expired]);
+      if (next.timedOut || next.done) break;
+      buffer += decoder.decode(next.value, { stream: true });
+    }
+  } finally { clearTimeout(timer); }
+  if (patterns.every((pattern) => buffer.includes(pattern))) return buffer;
+  throw new Error(`missing ${patterns.filter((p) => !buffer.includes(p)).join(', ')} in stream: ${JSON.stringify(buffer.slice(0, 300))}`);
+}
+
 function start(repo) {
   const child = spawn(process.execPath, [serve, repo, '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
   return new Promise((resolve, reject) => {
@@ -56,14 +86,16 @@ test('serves an aggregated graph, node detail, and pushes a change event', async
   assert.deepEqual(detail.symbols.map((s) => [s.kind, s.name]), [['function', 'format'], ['type', 'Formatted']]);
   assert.equal(detail.dependedOnBy[0].target, 'src/api/client.ts');
 
-  // Liveness is real: a CLI write in another process reaches an open stream with no reload.
+});
+
+test('a CLI write in another process reaches an open stream with no reload', { skip: noWatch }, async (t) => {
+  const repo = project();
+  const { child, base } = await start(repo);
+  t.after(() => child.kill());
   const stream = await fetch(base + '/events');
   const reader = stream.body.getReader();
-  await reader.read(); // the initial comment frame
-  const arrived = reader.read();
   execFileSync(process.execPath, [cli, 'record', 'knowledge', repo, '--title', 'live', '--text', 'written while serving'], { stdio: 'ignore' });
-  const { value } = await Promise.race([arrived, new Promise((_, reject) => setTimeout(() => reject(new Error('no change event within 5s')), 5000))]);
-  assert.match(new TextDecoder().decode(value), /event: change/);
+  await waitForFrames(reader, ['event: change']);
   await reader.cancel();
 });
 
@@ -124,31 +156,19 @@ test('serves the symbol map with numeric edge endpoints', async (t) => {
   assert.equal(flat[call[1]], 'src/ui/format.ts#format', 'and points at the definition it resolved to');
 });
 
-test('reindexes on a source edit and reports it, without any command being run', async (t) => {
+test('reindexes on a source edit and reports it, without any command being run', { skip: noWatch }, async (t) => {
   const repo = project();
   const { child, base } = await start(repo);
   t.after(() => child.kill());
 
   const stream = await fetch(base + '/events');
   const reader = stream.body.getReader();
-  await reader.read();                       // the initial comment frame
-  const decoder = new TextDecoder();
 
   // Nothing here runs the CLI: the watcher alone has to notice and rebuild.
   writeFileSync(join(repo, 'src', 'ui', 'added.ts'), 'export function addedByWatcher() {}\n');
 
-  const deadline = Date.now() + 15000;
-  let seenIndexing = false, seenChange = false;
-  while (Date.now() < deadline && !(seenIndexing && seenChange)) {
-    const next = await Promise.race([reader.read(), new Promise((resolve) => setTimeout(() => resolve({ value: null }), 15000))]);
-    if (!next.value) break;
-    const text = decoder.decode(next.value);
-    if (text.indexOf('event: indexing') !== -1) seenIndexing = true;
-    if (text.indexOf('event: change') !== -1) seenChange = true;
-  }
+  await waitForFrames(reader, ['event: indexing', 'event: change']);
   await reader.cancel();
-  assert(seenIndexing, 'the panel is told indexing started');
-  assert(seenChange, 'and told the index changed');
 
   const data = await (await fetch(base + '/api/map')).json();
   assert(data.files.some((f) => f.path === 'src/ui/added.ts'), 'the new file is in the index');
