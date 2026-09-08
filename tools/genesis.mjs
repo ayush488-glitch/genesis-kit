@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { boundary, defines, loadGraph, symptoms } from './query.mjs';
 import { tmpdir } from 'node:os';
 import { dashboardPage } from './dashboard.mjs';
 
@@ -548,11 +549,11 @@ function planStatus(repo, state) {
 }
 
 function workflowInstruction(state) {
-  if (!state.workflow) return 'Work only on the active bounded task.';
+  if (!state.workflow) return 'Work only on the active bounded task. Check `genesis query . impact PATH` before editing shared code.';
   if (state.lifecycle.phase === 'discovery') return 'Interview the human and complete SPEC.md. Do not write product implementation code.';
   if (state.lifecycle.phase === 'specification') return 'Present the checked SPEC.md for explicit human approval. Do not write product implementation code.';
   if (state.lifecycle.phase === 'planning') return 'Create requirement-linked implementation tasks with executable gates. Do not write product implementation code.';
-  return 'Implement only the active task and prove it against current sources.';
+  return 'Implement only the active task and prove it against current sources. Check `genesis query . impact PATH` before editing shared code.';
 }
 
 function renderPlan(repo, state) {
@@ -593,6 +594,8 @@ function renderKickoff(repo, state) {
     '## Resume', '',
     'Load Genesis and official Ponytail full, then run `genesis brief .` for the current task contract, binding rules and phase guide.',
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
+    'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
+    'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
@@ -684,6 +687,36 @@ function commandDashboard(parsed) {
     if (result.error || result.status !== 0) throw new Error(`could not open browser; open ${path} manually`);
   }
   console.log(path);
+}
+
+function commandMcp(parsed) {
+  const server = join(dirname(fileURLToPath(import.meta.url)), 'mcp.mjs');
+  const repo = resolve(parsed.positional[0] || '.');
+  // Speaks JSON-RPC on stdio and is driven by the host, so it inherits the pipes directly.
+  const result = spawnSync(process.execPath, [server, repo], { stdio: 'inherit' });
+  if (result.status) process.exitCode = result.status;
+}
+
+function commandQuery(parsed, raw) {
+  const query = join(dirname(fileURLToPath(import.meta.url)), 'query.mjs');
+  const repo = resolve(parsed.positional[0] || '.');
+  // Passed through verbatim: the query surface is defined in one place, not mirrored here.
+  const result = spawnSync(process.execPath, [query, repo, ...raw.slice(2)], { stdio: 'inherit' });
+  if (result.status) process.exitCode = result.status;
+}
+
+function commandServe(parsed) {
+  const repo = resolve(parsed.positional[0] || '.');
+  loadState(repo);
+  const serve = join(dirname(fileURLToPath(import.meta.url)), 'serve.mjs');
+  const args = [serve, repo];
+  if (parsed.options.port) args.push('--port', String(parsed.options.port));
+  if (parsed.options.open) args.push('--open');
+  // Documented as the escape hatch from reindex-on-every-save, so it has to actually reach serve.
+  if (parsed.options['no-watch']) args.push('--no-watch');
+  // Runs in the foreground until interrupted: it is a viewer, not a daemon, and it holds no lock.
+  const result = spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.status !== 0 && result.status !== null) throw new Error('control panel exited unexpectedly');
 }
 
 function commandTrace(parsed) {
@@ -833,6 +866,23 @@ function commandAgent(parsed, raw) {
 ## Genesis workflow
 
 Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+
+### Ask the index before reading the code
+
+This repository is indexed. Querying it is faster than grepping and answers questions grep cannot.
+
+- \`genesis query . search NAME\` — where a name is defined, when you know the name but not the file
+- \`genesis query . scope PATH\` — what a file or directory depends on, and what depends on it
+- \`genesis query . callers REF\` / \`callees REF\` — call edges for a symbol
+- \`genesis query . impact PATH\` — everything that transitively imports a file. Run this before editing shared code; it is the blast radius
+- \`genesis query . path FROM TO\` — how two files are connected
+- Add \`--json\` for machine-readable output.
+
+Start from the scope cards and symptom map already in \`genesis brief .\`; they point at declarations before you read anything. Treat every answer as advisory: it is static analysis, so confirm in source before relying on it. A result marked \`ambiguous\` means several definitions matched and none were ruled out — check the candidates rather than assuming the first.
+
+Run \`genesis serve .\` when the structure is unclear or you want to show a human what changed. It draws the repository as a live map, reindexes on save, and is read-only. If the index looks stale and nothing is watching, run \`genesis index .\`.
+
+Hosts that speak MCP can mount the same questions as tools with \`genesis mcp .\`.
 <!-- genesis:end -->`;
   if (!nested.options.write) {
     console.log(JSON.stringify({ dry_run: true, files: selected, block }, null, 2));
@@ -1258,10 +1308,21 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
   const scopes = task?.scope || [], tags = new Set(task?.requirements || []);
   const relevance = record => record.paths?.some(path => scopes.some(scope => path === scope || path.startsWith(scope + '/') || scope.startsWith(path + '/'))) ? 2
     : record.tags?.some(tag => tags.has(tag)) ? 1 : !record.paths?.length && !record.tags?.length ? 0 : -1;
+  // Within a band, prefer records that share vocabulary with the task. A tie-break only: the
+  // bands still decide what is admissible, so `included_because` keeps meaning what it says.
+  const taskText = task ? [task.outcome, task.next_action, task.blocker, ...(task.scenarios || [])].filter(Boolean).join(' ') : '';
+  const taskWords = new Set(taskText.toLowerCase().match(/[a-z][a-z0-9_$]{3,}/g) || []);
+  const overlap = record => {
+    if (!taskWords.size) return 0;
+    const words = new Set(`${record.title || ''} ${record.text || ''}`.toLowerCase().match(/[a-z][a-z0-9_$]{3,}/g) || []);
+    let shared = 0;
+    for (const word of words) if (taskWords.has(word)) shared++;
+    return shared;
+  };
   const packet = { project: { name: state.project.name, objective: state.project.objective }, source_hash: digest(inputManifest(repo, task?.inputs)), environment_hash: digest(environment(task || {})), config_hash: task ? taskConfig(state, task) : null, task: task ? { id: task.id, outcome: task.outcome, state: task.state, risk: task.risk, owner: task.owner, dependencies: task.dependencies, inputs: task.inputs, environment: task.environment, scope: scopes, requirements: task.requirements,
     scenarios: task.scenarios || [], blocker: task.blocker, next_action: task.next_action,
     gates: task.gates.map(g => ({ id: g.id, command: g.command, status: proofStatus(repo, state, task, g), evidence: g.evidence })) } : null,
-    phase: state.lifecycle.phase, instruction: workflowInstruction(state), records: [], graph: [], attempts: [], authorizations: [], rules: [], omitted: 0 };
+    phase: state.lifecycle.phase, instruction: workflowInstruction(state), records: [], scope_cards: [], symptoms: [], attempts: [], authorizations: [], rules: [], omitted: 0 };
   if (options.stage) {
     if (!BRIEF_STAGES.includes(options.stage)) throw new Error(`stage must be ${BRIEF_STAGES.join('|')}`);
     packet.stage = options.stage;
@@ -1278,18 +1339,35 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
   }
   for (const grant of state.authorizations.filter(a => task && a.task === task.id && a.status === 'active')) add('authorizations', { id: grant.id, command: grant.command, usable: Boolean(validAuthorization(state, task, grant.id)), expires_at: grant.expires_at });
   for (const attempt of state.attempts.filter(a => a.task === task?.id).slice(-3).reverse()) add('attempts', { id: attempt.id, kind: attempt.kind, status: attempt.status, stop_reason: attempt.stop_reason });
+  // Scope cards and a symptom map replace the raw edge dump that used to go here. Both are the
+  // same index read through query.mjs, so the packet, the CLI and the MCP tools agree.
+  if (task && existsSync(join(genesisDir(repo), 'index', 'graph.json'))) {
+    let graph = null;
+    try { graph = loadGraph(repo); } catch { graph = null; }
+    if (graph) {
+      packet.graph_source_hash = graph.sourceHash;
+      for (const scope of scopes) {
+        const edge = boundary(graph, scope, { limit: 8 });
+        add('scope_cards', {
+          scope,
+          files: edge.files,
+          symbols: defines(graph, scope, { limit: 20 }).map(symbol => `${symbol.kind} ${symbol.name} @${symbol.path}:${symbol.line}`),
+          depends_on: edge.dependsOn.map(row => row.target),
+          depended_on_by: edge.dependedOnBy.map(row => row.target),
+          advisory: true,
+        });
+      }
+      // Resolved before the agent reads anything, so it starts at code rather than at a search.
+      for (const site of symptoms(graph, taskText, { limit: 8 })) add('symptoms', { ...site, advisory: true });
+    }
+  }
   const candidates = ['decisions', 'knowledge', 'assumptions'].flatMap(type => (state[type] || []).map((record, index) => ({ type, record, index, score: relevance(record) })))
     .filter(({ record, score }) => typeof record === 'object' && record.status !== 'superseded' && score >= 0)
-    .sort((a, b) => b.score - a.score || b.index - a.index || a.type.localeCompare(b.type));
+    .map(entry => ({ ...entry, shared: overlap(entry.record) }))
+    .sort((a, b) => b.score - a.score || b.shared - a.shared || b.index - a.index || a.type.localeCompare(b.type));
   for (const { type, record, score } of candidates) {
     const entry = options.full ? { type, ...record } : { type, id: record.id, title: record.title, summary: excerpt(record.text), status: record.status, source: excerpt(record.source, 100), truncated: String(record.text || '').length > 280 };
     add('records', { ...entry, included_because: ['project context', 'requirement tag', 'task scope'][score] });
-  }
-  const graphPath = join(genesisDir(repo), 'index', 'graph.json');
-  if (task && existsSync(graphPath)) {
-    const graph = readJson(graphPath), seeds = new Set(graph.nodes.filter(n => n.path && scopes.some(scope => n.path === scope || n.path.startsWith(scope + '/'))).map(n => n.id));
-    packet.graph_source_hash = graph.sourceHash;
-    for (const edge of graph.edges.filter(e => seeds.has(e.source) || seeds.has(e.target))) add('graph', { source: edge.source, target: edge.target, type: edge.type, resolved: edge.resolved, confidence: edge.confidence, advisory: true });
   }
   packet.fingerprint = digest(packet);
   packet.metrics = { bytes: 0, estimated_tokens: 0, token_estimate: 'UTF-8 bytes / 4; model-dependent', budget_bytes: budget };
@@ -1457,8 +1535,8 @@ function commandCleanup(parsed) {
   const path = join(genesisDir(repo), 'index', 'graph.json');
   if (!existsSync(path)) runGraphizer(repo);
   const graph = readJson(path);
-  const imported = new Set(graph.edges.filter((edge) => edge.kind === 'imports').map((edge) => edge.to));
-  const candidates = graph.nodes.filter((node) => node.kind === 'file' && /\.(m?[jt]sx?|cjs|py)$/.test(node.path || '') && !imported.has(node.id))
+  const imported = new Set(graph.edges.filter((edge) => edge.type === 'imports').map((edge) => edge.target));
+  const candidates = graph.nodes.filter((node) => node.type === 'file' && /\.(m?[jt]sx?|cjs|py)$/.test(node.path || '') && !imported.has(node.id))
     .filter((node) => !/(^|\/)(index|main|app|setup|conftest|test[^/]*)\.[^.]+$/.test(node.path));
   state.cleanup_proposals = candidates.map((node) => ({ path: node.path, reason: 'no incoming static import in the current approximate graph', confidence: 'low', action: 'review before deletion' }));
   saveState(repo, state, 'cleanup.proposed', { count: state.cleanup_proposals.length });
@@ -1502,6 +1580,9 @@ Usage:
   genesis agent connect <repo> [--codex] [--claude] [--write]
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
+  genesis serve <repo> [--port N] [--open]   live control panel, read-only
+  genesis query <repo> search|defines|scope|callers|callees|impact|neighbours|path ...
+  genesis mcp <repo>                        expose the index to an agent over MCP stdio
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
@@ -1531,6 +1612,9 @@ async function main(raw) {
   if (command === 'run') return commandRun(parsed);
   if (command === 'evaluate') return commandEvaluate(parsed);
   if (command === 'recover') return commandRecover(parsed);
+  if (command === 'serve') return commandServe(parsed);
+  if (command === 'query') return commandQuery(parsed, raw);
+  if (command === 'mcp') return commandMcp(parsed);
   const nestedCommands = ['task', 'control', 'record', 'spec', 'plan', 'agent', 'learn', 'authorize', 'incident', 'workflow'];
   const repo = resolve((nestedCommands.includes(command) ? parseArgs(raw.slice(2)) : parsed).positional[0] || '.');
   return withLock(repo, () => dispatch(command, parsed, raw));

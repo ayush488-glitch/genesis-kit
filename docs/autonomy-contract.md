@@ -18,6 +18,21 @@ Local attribution records do not authenticate a human. Host permissions enforce 
 
 No graph database, hosted dashboard, automatic production deployment, automatic global-policy promotion or unmeasured model routing is included. Runtime and outcome checks remain domain-specific commands supplied by the project. There is no promise of exactly-once external effects or a benchmark improvement percentage.
 
+`genesis serve` adds a local process, so its boundary is stated explicitly. It binds loopback only,
+on an operating-system assigned port unless one is given. It reads `.genesis` and the source tree
+and writes neither; it holds no path that can change project state, approve a gate or complete a
+task, and its pages carry no controls that could. The one command it runs is the indexer, against
+its own repository, when a watched source file changes. It stays outside the repository write lock
+because it is a viewer, so it cannot block or serialise other commands. It performs no
+authentication: anyone able to reach that loopback port can read the index and the project state,
+which is the same access anyone able to read the repository already has.
+
+`genesis query` and `genesis mcp` read the generated index and nothing else. Their answers are
+static analysis and are marked advisory throughout: a call that cannot be resolved to one
+definition is returned as a candidate set or counted, never guessed, and absence from the index is
+not evidence of absence in the repository, since only JavaScript, TypeScript and Python are
+extracted and symbols are found by an anchored line scan.
+
 ## Verification
 
 Run the existing suite and adversarial integration cases, including real child-process interruption and concurrent state mutation. Exercise the complete runner and learning flow in disposable fixtures, run syntax checks, and verify the offline distribution contains the new commands and documentation.

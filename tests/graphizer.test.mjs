@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -29,7 +29,7 @@ test('dry-run emits deterministic qualified graph without writing', () => {
   assert(graph.nodes.some(({id}) => id === 'runtime:python:json'));
   assert(!graph.nodes.some(({id}) => id === 'package:pypi:json'));
   assert(graph.nodes.some(({id}) => id.startsWith('unresolved:src/broken.js:')));
-  assert(graph.nodes.some(({id,provenance}) => id === 'symbol:python/pkg/worker.py#class:Worker' && provenance.extractor === 'python-stdlib-ast'));
+  assert(graph.nodes.some(({id,extractor}) => id === 'symbol:python/pkg/worker.py#class:Worker' && extractor === 'python-stdlib-ast'));
   assert(graph.nodes.some(({id}) => id === 'symbol:python/pkg/worker.py#function:Worker.work'));
   assert(graph.edges.some(({source,target,resolved}) => source === 'file:src/two/index.ts' && target === 'file:src/one/index.ts' && resolved));
   assert.throws(() => statSync(join(root, '.genesis', 'index', 'graph.json')));
@@ -46,6 +46,201 @@ test('--write creates views and leaves unchanged output untouched', async () => 
 
 test('--out keeps compatibility and places sibling views beside JSON', () => {
   const root = fixture(), out = join(root, 'artifacts', 'custom.json'); execFileSync(process.execPath, [graphizer, root, '--out', out, '--write']);
-  assert.equal(JSON.parse(readFileSync(out,'utf8')).schemaVersion, 1);
+  assert.equal(JSON.parse(readFileSync(out,'utf8')).schemaVersion, 2);
   assert.match(readFileSync(join(root, 'artifacts', 'graph.html'),'utf8'), /code graph/);
+});
+
+function monorepo() {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-mono-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/common/*"\n\ncatalogs:\n  frontend:\n    react: ^18\n');
+  // Trailing comma and comments: a naive JSONC strip breaks on these.
+  write('apps/web/tsconfig.json', '{\n  // app config\n  "compilerOptions": {\n    "paths": { "@/*": ["./src/*"] },\n  },\n}\n');
+  write('apps/web/src/lib/format.ts', 'export function format() {}\n');
+  write('apps/web/src/page.tsx', "import { format } from '@/lib/format';\nimport { shared } from '@scope/shared';\nimport { Button } from '@scope/ui/components/button';\nimport { schema } from '@scope/shared/schema';\nimport react from 'react';\n");
+  write('packages/common/shared/package.json', '{"name":"@scope/shared","exports":{".":{"types":"./src/index.ts","default":"./dist/index.js"},"./schema":{"types":"./src/schema.ts","default":"./dist/schema.js"}}}');
+  write('packages/common/shared/src/index.ts', 'export const shared = 1;\n');
+  write('packages/common/shared/src/schema.ts', 'export const schema = 1;\n');
+  write('packages/common/ui/package.json', '{"name":"@scope/ui"}');
+  write('packages/common/ui/src/components/button.tsx', 'export const Button = () => null;\n');
+  return root;
+}
+
+test('resolves tsconfig path aliases and workspace packages across a monorepo', () => {
+  const root = monorepo();
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = (specifier) => graph.edges.find((e) => e.specifier === specifier && e.source === 'file:apps/web/src/page.tsx');
+  assert.equal(edge('@/lib/format').target, 'file:apps/web/src/lib/format.ts', 'tsconfig "@/*" alias');
+  assert.equal(edge('@scope/shared').target, 'file:packages/common/shared/src/index.ts', 'workspace root via exports "types"');
+  assert.equal(edge('@scope/shared/schema').target, 'file:packages/common/shared/src/schema.ts', 'workspace exports subpath');
+  assert.equal(edge('@scope/ui/components/button').target, 'file:packages/common/ui/src/components/button.tsx', 'workspace subpath with no exports map, via src/');
+  for (const specifier of ['@/lib/format', '@scope/shared', '@scope/shared/schema', '@scope/ui/components/button']) assert.equal(edge(specifier).resolved, true, specifier);
+  // A genuine external stays external rather than being force-resolved.
+  assert.equal(edge('react').resolved, false);
+  assert(graph.nodes.some(({ id }) => id === 'package:npm:react'));
+});
+
+test('extracts top-level declaration kinds without claiming nested ones', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-symbols-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'shapes.tsx'), [
+    'const Icon = ({ className = "" }) => {',            // unexported arrow + default export: the common React shape
+    '  const nested = () => null;',                       // nested, must not be claimed
+    '  return null;',
+    '};',
+    'const compact = (a: string, b: string) => a + b;',
+    'const wrapped = async (',                            // arrow whose params wrap to the next line
+    '  value: string,',
+    ') => value;',
+    'export type Alias = string;',
+    'export interface Shape { size: number }',
+    'export enum Mode { On, Off }',
+    'export const NAME = "constant";',
+    'export default Icon;',
+    'export async function load() {}',
+    'export abstract class Base {}',
+  ].join('\n') + '\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const symbols = new Map(graph.nodes.filter((n) => n.type === 'symbol').map((n) => [n.name, n.kind]));
+  assert.equal(symbols.get('Icon'), 'function', 'unexported arrow component');
+  assert.equal(symbols.get('compact'), 'function', 'arrow with typed params');
+  assert.equal(symbols.get('wrapped'), 'function', 'arrow with params on following lines');
+  assert.equal(symbols.get('Alias'), 'type');
+  assert.equal(symbols.get('Shape'), 'interface');
+  assert.equal(symbols.get('Mode'), 'enum');
+  assert.equal(symbols.get('NAME'), 'variable', 'a plain value stays a variable');
+  assert.equal(symbols.get('load'), 'function');
+  assert.equal(symbols.get('Base'), 'class');
+  assert(!symbols.has('nested'), 'declarations inside a function body must not be claimed');
+});
+
+test('resolves calls into proven and ambiguous tiers, and never invents the rest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-calls-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('src/util.ts', 'export function helper() {}\n');
+  write('src/other.ts', 'export function collide() {}\n');
+  write('src/third.ts', 'export function collide() {}\n');
+  write('src/base.ts', 'export class Base {}\n');
+  write('src/main.ts', [
+    "import { helper } from './util';",
+    "import { Base } from './base';",
+    'export function run() {',
+    '  helper();',            // imported, one definition -> proven
+    '  local();',             // same file -> proven
+    '  collide();',           // two definitions, not imported -> ambiguous, candidates kept
+    '  fetch();',             // nothing knows it -> counted, not invented
+    '}',
+    'export function local() {}',
+    'export class Child extends Base {}',
+  ].join('\n') + '\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const from = 'symbol:src/main.ts#function:run';
+  const call = (target) => graph.edges.find((e) => e.type === 'calls' && e.source === from && e.target === target);
+
+  assert.equal(call('symbol:src/util.ts#function:helper').tier, 'proven', 'call to an imported symbol');
+  assert.equal(call('symbol:src/main.ts#function:local').tier, 'proven', 'call within the same file');
+
+  const ambiguous = graph.edges.find((e) => e.type === 'calls' && e.source === from && e.tier === 'ambiguous');
+  assert(ambiguous, 'a name matching several definitions stays ambiguous');
+  assert.equal(ambiguous.candidates.length, 2, 'every candidate is kept rather than collapsed to a guess');
+  assert.equal(ambiguous.resolved, false);
+
+  assert(!graph.edges.some((e) => e.type === 'calls' && /fetch/.test(e.target)), 'an unknown call is never invented');
+  assert(graph.stats.unresolvedCalls > 0, 'unknown calls are counted');
+
+  assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/main.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
+});
+
+test('incremental reindex reuses unchanged files and matches a full rebuild', () => {
+  const root = fixture();
+  const out = join(root, '.genesis', 'index', 'graph.json');
+  const read = () => JSON.parse(readFileSync(out, 'utf8'));
+  // Counts are reported on stderr, never in the graph: the graph has to stay a pure function of
+  // the sources, or an unchanged tree would rewrite it on every run.
+  const run = (extra = []) => {
+    const result = spawnSync(process.execPath, [graphizer, root, '--write', ...extra], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const counts = /\((\d+) extracted, (\d+) reused\)/.exec(result.stderr);
+    assert(counts, `no counts in stderr: ${result.stderr}`);
+    return { extracted: Number(counts[1]), reused: Number(counts[2]) };
+  };
+
+  const cold = run();
+  assert.equal(cold.reused, 0, 'a cold run has nothing to reuse');
+  assert(cold.extracted > 0);
+
+  const warm = run();
+  assert.equal(warm.extracted, 0, 'an unchanged tree re-reads nothing');
+  assert.equal(warm.reused, cold.extracted);
+
+  writeFileSync(join(root, 'src', 'one', 'index.ts'), 'export function one() {}\nexport function two() {}\n');
+  const edited = run();
+  assert.equal(edited.extracted, 1, 'only the edited file is re-read');
+  const after = read();
+  assert(after.nodes.some(({ id }) => id === 'symbol:src/one/index.ts#function:two'), 'and its new symbol appears');
+
+  // The whole point: incremental must not be a different answer from a full rebuild.
+  run(['--full']);
+  const full = read();
+  assert.deepEqual(after.nodes, full.nodes);
+  assert.deepEqual(after.edges, full.edges);
+  assert.equal(after.sourceHash, full.sourceHash);
+});
+
+test('extracts Python calls and inheritance, kept separate from JavaScript', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-py-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('pkg/base.py', 'class Base:\n    def run(self):\n        return 1\n');
+  write('pkg/worker.py', [
+    'from .base import Base',
+    'from .util import helper',
+    '',
+    'class Worker(Base):',                 // inheritance across files
+    '    def work(self):',
+    '        helper()',                    // imported call
+    '        return self.run()',           // attribute call, resolves by bare name
+    '',
+    'def start():',
+    '    w = Worker()',                    // local class
+    '    return w.work()',
+  ].join('\n') + '\n');
+  write('pkg/util.py', 'def helper():\n    return 2\n');
+  // Same name in JavaScript: a Python call must never resolve to it.
+  write('web/app.js', 'export function helper() {}\n');
+
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const call = (from, to) => graph.edges.find((e) => e.type === 'calls' && e.source === from && e.target === to);
+
+  assert(call('symbol:pkg/worker.py#function:Worker.work', 'symbol:pkg/util.py#function:helper'), 'call to an imported Python function');
+  assert(call('symbol:pkg/worker.py#function:Worker.work', 'symbol:pkg/base.py#function:Base.run'), 'attribute call resolved by bare name against a qualified symbol');
+  assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:pkg/worker.py#class:Worker' && e.target === 'symbol:pkg/base.py#class:Base'));
+
+  const crossed = graph.edges.filter((e) => e.type === 'calls' && /\.py#/.test(e.source) && /web\/app\.js/.test(e.target));
+  assert.equal(crossed.length, 0, 'a Python call never resolves into JavaScript');
+  assert(graph.edges.some((e) => e.extractor === 'python-stdlib-ast-calls'));
+});
+
+test('a failing python3 costs symbols, not whole files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-nopy-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(root, 'pkg'), { recursive: true });
+  writeFileSync(join(root, 'pkg', 'app.py'), 'import helper\ndef main():\n    return helper.go()\n');
+  writeFileSync(join(root, 'pkg', 'helper.py'), 'def go():\n    return 1\n');
+  writeFileSync(join(root, 'pkg', 'web.ts'), 'export const x = 1;\n');
+  // A python3 that always fails, the way a missing interpreter behaves.
+  writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
+
+  const result = spawnSync(process.execPath, [graphizer, root], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(result.status, 0);
+  const graph = JSON.parse(result.stdout);
+
+  const files = graph.nodes.filter((n) => n.type === 'file').map((n) => n.path).sort();
+  assert.deepEqual(files, ['pkg/app.py', 'pkg/helper.py', 'pkg/web.ts'], 'every walked file keeps a node');
+  assert.equal(graph.nodes.filter((n) => n.type === 'symbol' && n.path.endsWith('.py')).length, 0, 'but no Python symbols were invented');
+  assert(graph.warnings.some((w) => /Python AST unavailable/.test(w)), 'and the failure is reported');
+
+  // Dropping the nodes while keeping the edges would leave imports pointing at nothing.
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  assert.equal(graph.edges.filter((e) => !ids.has(e.source) || !ids.has(e.target)).length, 0, 'no edge points at a missing node');
 });

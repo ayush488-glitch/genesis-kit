@@ -6,3 +6,4 @@ node_modules/
 # os
 .DS_Store
 **/.DS_Store
+.gstack/
