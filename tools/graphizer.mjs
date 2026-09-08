@@ -137,8 +137,39 @@ function addDependency(from, specifier, line, language, standard = false) {
 }
 
 const jsImport = /^\s*(?:import\s+(?:[^'";]*?\s+from\s*)?|export\s+[^'";]*?\s+from\s*|(?:(?:const|let|var)\s+[\w${}, ]+\s*=\s*)?require\s*\(\s*)['"]([^'"]+)['"]/gm;
-const jsSymbol = /(?:^|\n)\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?(class|function)\s+([A-Za-z_$][\w$]*)|(?:^|\n)\s*export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g;
-for (const path of files.filter(file => extname(file) !== '.py')) { const source = readFileSync(path, 'utf8'); let match; while ((match = jsImport.exec(source))) addDependency(path, match[1], source.slice(0, match.index).split('\n').length, 'javascript'); while ((match = jsSymbol.exec(source))) { const kind = match[1] || 'variable', name = match[2] || match[3], line = source.slice(0, match.index).split('\n').length, rel = posix(relative(root, path)), id = `symbol:${rel}#${kind}:${name}`; addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, provenance: provenance('conservative-js-symbols', rel), contentHash: hash(`${kind}:${name}`) }); addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, provenance: provenance('conservative-js-symbols', rel) }); } }
+// Top-level declarations only: patterns anchor at column 0, so nested declarations are never claimed.
+// Ordered — the first match wins, so arrow-valued bindings are reported as functions, not variables.
+const NAME = '([A-Za-z_$][\\w$]*)', DECL = '^(?:export\\s+)?(?:declare\\s+)?';
+const JS_PATTERNS = [
+  ['function', new RegExp(`^export\\s+default\\s+(?:async\\s+)?function\\s*\\*?\\s*${NAME}`)],
+  ['function', new RegExp(`${DECL}(?:async\\s+)?function\\s*\\*?\\s*${NAME}`)],
+  ['class', new RegExp(`^(?:export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:abstract\\s+)?class\\s+${NAME}`)],
+  ['interface', new RegExp(`${DECL}interface\\s+${NAME}`)],
+  ['type', new RegExp(`${DECL}type\\s+${NAME}`)],
+  ['enum', new RegExp(`${DECL}(?:const\\s+)?enum\\s+${NAME}`)],
+  // `const x = (a) => ...` and `const x = async (\n` both name a function, not a value.
+  ['function', new RegExp(`${DECL}(?:const|let|var)\\s+${NAME}\\s*(?::\\s*[^=]+?)?=\\s*(?:async\\s+)?(?:\\([^)]*\\)|[A-Za-z_$][\\w$]*)\\s*(?::[^=]*?)?=>`)],
+  ['function', new RegExp(`${DECL}(?:const|let|var)\\s+${NAME}\\s*(?::[^=]+)?=\\s*(?:async\\s+)?\\(\\s*$`)],
+  ['variable', new RegExp(`${DECL}(?:const|let|var)\\s+${NAME}`)],
+];
+function jsSymbols(source) {
+  const found = [], lines = source.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line || /^\s/.test(line)) continue;
+    for (const [kind, pattern] of JS_PATTERNS) { const match = pattern.exec(line); if (match) { found.push({ kind, name: match[1], line: index + 1 }); break; } }
+  }
+  return found;
+}
+for (const path of files.filter(file => extname(file) !== '.py')) {
+  const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path));
+  let match; while ((match = jsImport.exec(source))) addDependency(path, match[1], source.slice(0, match.index).split('\n').length, 'javascript');
+  for (const { kind, name, line } of jsSymbols(source)) {
+    const id = `symbol:${rel}#${kind}:${name}`;
+    addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, provenance: provenance('conservative-js-symbols', rel), contentHash: hash(`${kind}:${name}`) });
+    addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, provenance: provenance('conservative-js-symbols', rel) });
+  }
+}
 
 const pythonFiles = files.filter(file => extname(file) === '.py');
 if (pythonFiles.length) {

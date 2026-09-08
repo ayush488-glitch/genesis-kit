@@ -79,3 +79,37 @@ test('resolves tsconfig path aliases and workspace packages across a monorepo', 
   assert.equal(edge('react').resolved, false);
   assert(graph.nodes.some(({ id }) => id === 'package:npm:react'));
 });
+
+test('extracts top-level declaration kinds without claiming nested ones', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-symbols-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'shapes.tsx'), [
+    'const Icon = ({ className = "" }) => {',            // unexported arrow + default export: the common React shape
+    '  const nested = () => null;',                       // nested, must not be claimed
+    '  return null;',
+    '};',
+    'const compact = (a: string, b: string) => a + b;',
+    'const wrapped = async (',                            // arrow whose params wrap to the next line
+    '  value: string,',
+    ') => value;',
+    'export type Alias = string;',
+    'export interface Shape { size: number }',
+    'export enum Mode { On, Off }',
+    'export const NAME = "constant";',
+    'export default Icon;',
+    'export async function load() {}',
+    'export abstract class Base {}',
+  ].join('\n') + '\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const symbols = new Map(graph.nodes.filter((n) => n.type === 'symbol').map((n) => [n.name, n.kind]));
+  assert.equal(symbols.get('Icon'), 'function', 'unexported arrow component');
+  assert.equal(symbols.get('compact'), 'function', 'arrow with typed params');
+  assert.equal(symbols.get('wrapped'), 'function', 'arrow with params on following lines');
+  assert.equal(symbols.get('Alias'), 'type');
+  assert.equal(symbols.get('Shape'), 'interface');
+  assert.equal(symbols.get('Mode'), 'enum');
+  assert.equal(symbols.get('NAME'), 'variable', 'a plain value stays a variable');
+  assert.equal(symbols.get('load'), 'function');
+  assert.equal(symbols.get('Base'), 'class');
+  assert(!symbols.has('nested'), 'declarations inside a function body must not be claimed');
+});
