@@ -686,6 +686,14 @@ function commandDashboard(parsed) {
   console.log(path);
 }
 
+function commandQuery(parsed, raw) {
+  const query = join(dirname(fileURLToPath(import.meta.url)), 'query.mjs');
+  const repo = resolve(parsed.positional[0] || '.');
+  // Passed through verbatim: the query surface is defined in one place, not mirrored here.
+  const result = spawnSync(process.execPath, [query, repo, ...raw.slice(2)], { stdio: 'inherit' });
+  if (result.status) process.exitCode = result.status;
+}
+
 function commandServe(parsed) {
   const repo = resolve(parsed.positional[0] || '.');
   loadState(repo);
@@ -1515,6 +1523,7 @@ Usage:
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
   genesis serve <repo> [--port N] [--open]   live control panel, read-only
+  genesis query <repo> search|defines|callers|callees|impact|neighbours|path ...
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
@@ -1545,6 +1554,7 @@ async function main(raw) {
   if (command === 'evaluate') return commandEvaluate(parsed);
   if (command === 'recover') return commandRecover(parsed);
   if (command === 'serve') return commandServe(parsed);
+  if (command === 'query') return commandQuery(parsed, raw);
   const nestedCommands = ['task', 'control', 'record', 'spec', 'plan', 'agent', 'learn', 'authorize', 'incident', 'workflow'];
   const repo = resolve((nestedCommands.includes(command) ? parseArgs(raw.slice(2)) : parsed).positional[0] || '.');
   return withLock(repo, () => dispatch(command, parsed, raw));
