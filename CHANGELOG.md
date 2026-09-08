@@ -2,6 +2,17 @@
 
 ## 2.4.0 — Unreleased
 
+Review follow-ups (#13-#20):
+
+- Surface ambiguity everywhere a reference is resolved, not only in the symbol tools. `get_impact` and `trace_path` return `resolved`/`also_matched`, and `genesis query --json` carries it too; a note on stderr was invisible to the callers most likely to act on the wrong symbol.
+- Reject unregistered MCP tool names. An unknown name previously fell through to `get_neighbours` and returned a confident wrong answer.
+- Stop calling `process.exit` when MCP stdin closes; a queued response on a pipe could be discarded before it flushed.
+- Publish graph artifacts atomically (temp file then rename) and reindex through `genesis index`, which takes the repository write lock. A concurrent reader could previously parse a half-written `graph.json`.
+- Resolve an aliased parent class by its exported name, so `import { Base as Parent }` followed by `class Child extends Parent` produces an inheritance edge.
+- State plainly that `genesis serve` has no authentication and that loopback binding is not authorization: on a shared host any local process can read the index and project state regardless of filesystem permissions.
+- Correct three recipes that claimed more for `impact` than it supports. It traverses imports only, so it is a lead rather than proof, it is never evidence about what ran at runtime, and it cannot resolve a file that is not indexed yet.
+
+
 - Index monorepos correctly: resolve `tsconfig` path aliases against the nearest governing config and resolve workspace packages from `pnpm-workspace.yaml` or `package.json` workspaces, preferring the `exports` "types" condition. On a 351k-line codebase unresolved edges fall from 9,617 to 4,030.
 - Extract the declaration kinds TypeScript actually uses, including unexported arrow components and `type`, `interface` and `enum`. Symbols rise from 2,738 to 8,813 on the same codebase; files yielding no symbol fall from 58% to 3%.
 - Add `calls` and `inherits` edges for JavaScript, TypeScript and Python, resolved through real import bindings. Calls carry a tier: `proven` when one definition matches, `ambiguous` with every candidate retained when several do, and unresolved calls are counted rather than invented. Symbol indexes are per language, so a call never resolves across languages.

@@ -199,14 +199,16 @@ try {
 // so only the files whose size or mtime moved are re-read.
 const SKIP = /(^|\/)(\.git|\.genesis|node_modules|dist|build|out|target|coverage|\.next|\.turbo|\.venv|venv|__pycache__)(\/|$)/;
 const CODE_FILE = /\.(?:m?[jt]sx?|cjs|py)$/;
-const graphizer = join(dirname(fileURLToPath(import.meta.url)), 'graphizer.mjs');
+// Reindex through the CLI rather than the graphizer directly: `genesis index` runs inside the
+// repository write lock, so a save cannot race a command that is already mutating state.
+const indexer = join(dirname(fileURLToPath(import.meta.url)), 'genesis.mjs');
 let indexing = false, again = false, debounce = null;
 function reindex() {
   if (indexing) { again = true; return; }
   indexing = true;
   push('indexing', { state: 'start' });
   const started = Date.now();
-  const child = spawn(process.execPath, [graphizer, repo, '--write'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn(process.execPath, [indexer, 'index', repo], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('exit', (code) => {

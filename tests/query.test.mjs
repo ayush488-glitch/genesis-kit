@@ -91,3 +91,14 @@ test('a missing node yields an identifiable row rather than crashing the printer
   // A row without identity would silently strip meaning from --json too.
   assert.notEqual(describe(undefined, 'x').name, undefined);
 });
+
+test('--json carries ambiguity, since a note on stderr is invisible to a parser', () => {
+  const repo = repoFixture();
+  const ambiguous = JSON.parse(execFileSync(process.execPath, [cli, repo, 'callers', 'helper', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  assert.equal(ambiguous.also_matched.length, 2, 'both definitions are named');
+  assert(Array.isArray(ambiguous.results), 'and the answer is still there');
+
+  // An unambiguous reference keeps the plain array shape.
+  const plain = JSON.parse(execFileSync(process.execPath, [cli, repo, 'callers', 'src/util.ts#helper', '--json'], { encoding: 'utf8' }));
+  assert(Array.isArray(plain));
+});

@@ -39,23 +39,36 @@ function one(graph, value) {
   return { node: found[0] };
 }
 
+const withAmbiguity = (target, results) => target.ambiguous ? { resolved: target.node.id, also_matched: target.ambiguous, results } : results;
+
 function call(name, args) {
   const graph = loadGraph(repo);
   const options = { limit: args.limit, hops: args.hops };
   if (name === 'search_symbols') return search(graph, args.text, options);
   if (name === 'get_definitions') return defines(graph, args.path, options);
   if (name === 'get_scope') return boundary(graph, args.path, options);
-  if (name === 'get_impact') return impact(graph, one(graph, args.path).node, options);
+  // Ambiguity travels with every answer, not only the symbol tools: a path reported for the wrong
+  // definition looks exactly like a path reported for the right one.
+  if (name === 'get_impact') {
+    const target = one(graph, args.path);
+    const rows = impact(graph, target.node, options);
+    return withAmbiguity(target, rows);
+  }
   if (name === 'trace_path') {
     const from = one(graph, args.from), to = one(graph, args.to);
     const steps = shortestPath(graph, from.node, to.node, options);
-    return steps ? { from: from.node.id, to: to.node.id, steps } : { from: from.node.id, to: to.node.id, steps: null, note: 'no path within the hop limit' };
+    const answer = { from: from.node.id, to: to.node.id, steps: steps ?? null };
+    if (!steps) answer.note = 'no path within the hop limit';
+    if (from.ambiguous) answer.from_also_matched = from.ambiguous;
+    if (to.ambiguous) answer.to_also_matched = to.ambiguous;
+    return answer;
   }
+  if (name !== 'get_callers' && name !== 'get_callees' && name !== 'get_neighbours') throw new Error(`unknown tool: ${name}`);
   const target = one(graph, args.ref);
   const rows = name === 'get_callers' ? callers(graph, target.node, options)
     : name === 'get_callees' ? callees(graph, target.node, options)
     : neighbours(graph, target.node, options);
-  return target.ambiguous ? { resolved: target.node.id, also_matched: target.ambiguous, results: rows } : rows;
+  return withAmbiguity(target, rows);
 }
 
 function handle(request) {
@@ -89,4 +102,7 @@ process.stdin.on('data', (chunk) => {
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   }
 });
-process.stdin.on('end', () => process.exit(0));
+// No process.exit here: stdout is a pipe, so writes are asynchronous and exiting on stdin close
+// can discard a response that has been written but not yet flushed. The process ends on its own
+// once stdin is closed and nothing is pending.
+process.stdin.on('end', () => { process.stdin.pause(); });
