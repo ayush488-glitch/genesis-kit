@@ -2,12 +2,13 @@
 // Deterministic, read-only, zero-dependency source indexer.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 
 const argv = process.argv.slice(2), rootArg = argv[0];
-if (!rootArg) { console.error('usage: node graphizer.mjs <repo-root> [--out <path>] [--write]'); process.exit(1); }
+const full = argv.includes('--full');
+if (!rootArg) { console.error('usage: node graphizer.mjs <repo-root> [--out <path>] [--write] [--full]'); process.exit(1); }
 const root = resolve(rootArg), write = argv.includes('--write'), outIndex = argv.indexOf('--out');
 if (outIndex !== -1 && !argv[outIndex + 1]) { console.error('--out needs a path'); process.exit(1); }
 const outPath = resolve(outIndex < 0 ? join(root, '.genesis', 'index', 'graph.json') : argv[outIndex + 1]), outDir = dirname(outPath);
@@ -24,7 +25,7 @@ const fileId = path => `file:${posix(relative(root, path))}`;
 const addNode = node => nodes.set(node.id, node);
 // Keyed by a derivable identity so edges dedupe and sort deterministically without storing it.
 const addEdge = edge => edges.set(`${edge.type}:${edge.source}->${edge.target}:${edge.specifier ?? ''}`, edge);
-for (const path of files) { const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path)); addNode({ id: fileId(path), type: 'file', label: rel, path: rel, language: extname(path) === '.py' ? 'python' : 'javascript', confidence: 1, extractor: 'filesystem', contentHash: hash(source) }); }
+
 
 // --- monorepo-aware resolution: JSONC configs, workspace packages, tsconfig path aliases ---
 // Comment and trailing-comma stripping is string-aware; a naive regex corrupts values containing "//" or ", }".
@@ -182,25 +183,100 @@ const CALL_KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return'
 const callSite = /(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(/g;
 const extendsSite = /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:abstract\s+)?class\s+[A-Za-z_$][\w$]*(?:<[^>]*>)?\s+extends\s+([A-Za-z_$][\w$]*)/;
 
-const jsFiles = files.filter(file => extname(file) !== '.py');
-const sources = new Map(), fileSymbols = new Map(), fileImports = new Map();
-for (const path of jsFiles) {
-  const source = readFileSync(path, 'utf8'), rel = posix(relative(root, path));
-  sources.set(rel, source);
-  let match; while ((match = jsImport.exec(source))) addDependency(path, match[1], source.slice(0, match.index).split('\n').length, 'javascript');
-  const symbols = jsSymbols(source);
-  fileSymbols.set(rel, symbols);
-  for (const { kind, name, line } of symbols) {
-    const id = `symbol:${rel}#${kind}:${name}`;
-    addNode({ id, type: 'symbol', kind, name, label: name, path: rel, line, confidence: .8, extractor: 'conservative-js-symbols', contentHash: hash(`${kind}:${name}`) });
-    addEdge({ type: 'defines', source: fileId(path), target: id, line, resolved: true, confidence: .8, extractor: 'conservative-js-symbols' });
+// --- extraction, cached per file ------------------------------------------------
+// Change is detected by size and mtime rather than by hashing, because hashing means reading
+// every file, which is the thing incremental indexing exists to avoid. A file whose stat is
+// unchanged is never opened; its previous extraction is reused verbatim.
+const cachePath = join(outDir, 'cache.json');
+const CACHE_VERSION = 1;
+let cache = {};
+// Strict JSON.parse, never the JSONC reader: this file is ours, it is megabytes, and that
+// reader walks character by character building a string, which is quadratic at this size.
+if (!full && existsSync(cachePath)) { try { const loaded = JSON.parse(readFileSync(cachePath, 'utf8')); if (loaded.version === CACHE_VERSION) cache = loaded.files || {}; } catch { cache = {}; } }
+const nextCache = {};
+let reused = 0, extracted = 0;
+
+function extractJs(source) {
+  const symbols = jsSymbols(source), lines = source.split('\n');
+  const imports = [];
+  let match; jsImport.lastIndex = 0;
+  while ((match = jsImport.exec(source))) imports.push({ specifier: match[1], line: source.slice(0, match.index).split('\n').length });
+  const bindings = [];
+  importClause.lastIndex = 0;
+  while ((match = importClause.exec(source))) for (const binding of bindingsOf(match[1])) bindings.push({ local: binding.local, imported: binding.imported, specifier: match[2] });
+  // Call names are recorded unresolved: which definition a name refers to depends on the whole
+  // file set, so resolution has to run globally even when extraction is reused.
+  const calls = [];
+  for (let index = 0; index < symbols.length; index++) {
+    const symbol = symbols[index];
+    const end = index + 1 < symbols.length ? symbols[index + 1].line - 1 : lines.length;
+    const body = lines.slice(symbol.line - 1, end).join('\n');
+    const names = [], seen = new Set();
+    let call; callSite.lastIndex = 0;
+    while ((call = callSite.exec(body))) {
+      const name = call[1];
+      if (CALL_KEYWORDS.has(name) || name === symbol.name || seen.has(name)) continue;
+      seen.add(name); names.push(name);
+    }
+    const inherit = extendsSite.exec(lines[symbol.line - 1] || '');
+    calls.push({ names, inherits: inherit ? inherit[1] : null });
   }
+  return { symbols, imports, bindings, calls };
+}
+
+const pythonScript = `import ast,json,sys\nr=[]\nclass Scan(ast.NodeVisitor):\n def __init__(self): self.imports=[]; self.symbols=[]; self.scope=[]\n def visit_Import(self,n): self.imports += [{'specifier':a.name,'line':n.lineno,'standard':a.name.split('.')[0] in sys.stdlib_module_names} for a in n.names]\n def visit_ImportFrom(self,n): self.imports.append({'specifier':'.'*n.level+(n.module or ''),'line':n.lineno,'standard':n.level==0 and (n.module or '').split('.')[0] in sys.stdlib_module_names})\n def symbol(self,n,kind):\n  q='.'.join(self.scope+[n.name]); self.symbols.append({'name':n.name,'qualifiedName':q,'kind':kind,'line':n.lineno}); self.scope.append(n.name); self.generic_visit(n); self.scope.pop()\n def visit_ClassDef(self,n): self.symbol(n,'class')\n def visit_FunctionDef(self,n): self.symbol(n,'function')\n def visit_AsyncFunctionDef(self,n): self.symbol(n,'function')\nfor p in json.load(sys.stdin):\n try:\n  s=Scan(); s.visit(ast.parse(open(p,encoding='utf-8').read(),filename=p)); r.append({'path':p,'imports':s.imports,'symbols':s.symbols})\n except (OSError,SyntaxError) as e: r.append({'path':p,'error':str(e)})\nprint(json.dumps(r))`;
+
+const entries = new Map();      // rel -> { path, language, contentHash, symbols, imports, bindings, calls, error }
+const stalePython = [];
+for (const path of files) {
+  const rel = posix(relative(root, path)), python = extname(path) === '.py';
+  let stat; try { stat = statSync(path); } catch { continue; }
+  const stamp = `${stat.size}:${Math.round(stat.mtimeMs)}`;
+  const hit = cache[rel];
+  if (hit && hit.stamp === stamp) { entries.set(rel, { ...hit.data, path, language: python ? 'python' : 'javascript', contentHash: hit.contentHash }); nextCache[rel] = hit; reused += 1; continue; }
+  extracted += 1;
+  if (python) { stalePython.push({ path, rel, stamp }); continue; }
+  const source = readFileSync(path, 'utf8');
+  const data = extractJs(source), contentHash = hash(source);
+  entries.set(rel, { ...data, path, language: 'javascript', contentHash });
+  nextCache[rel] = { stamp, contentHash, data };
+}
+if (stalePython.length) {
+  const parsed = spawnSync('python3', ['-c', pythonScript], { input: JSON.stringify(stalePython.map(item => item.path)), encoding: 'utf8' });
+  if (parsed.status !== 0) warnings.push(`Python AST unavailable: ${(parsed.stderr || 'python3 failed').trim()}`);
+  else {
+    const results = new Map(JSON.parse(parsed.stdout).map(result => [result.path, result]));
+    for (const item of stalePython) {
+      const result = results.get(item.path) || {};
+      const contentHash = hash(readFileSync(item.path, 'utf8'));
+      const data = result.error ? { error: result.error, symbols: [], imports: [], bindings: [], calls: [] } : { symbols: result.symbols, imports: result.imports, bindings: [], calls: [] };
+      entries.set(item.rel, { ...data, path: item.path, language: 'python', contentHash });
+      nextCache[item.rel] = { stamp: item.stamp, contentHash, data };
+    }
+  }
+}
+
+// --- graph assembly, always over the whole file set ------------------------------
+// Resolution is global even when extraction was reused: adding one file can resolve an import
+// somewhere else, or turn a proven call into an ambiguous one.
+const fileSymbols = new Map(), fileImports = new Map();
+for (const [rel, entry] of entries) {
+  addNode({ id: `file:${rel}`, type: 'file', label: rel, path: rel, language: entry.language, confidence: 1, extractor: 'filesystem', contentHash: entry.contentHash });
+  if (entry.error) { warnings.push(`${rel}: ${entry.error}`); continue; }
+  const python = entry.language === 'python';
+  const extractor = python ? 'python-stdlib-ast' : 'conservative-js-symbols';
+  const named = entry.symbols.map(symbol => ({ ...symbol, name: python ? symbol.qualifiedName : symbol.name }));
+  fileSymbols.set(rel, named);
+  for (const symbol of named) {
+    const id = `symbol:${rel}#${symbol.kind}:${symbol.name}`;
+    addNode({ id, type: 'symbol', kind: symbol.kind, name: symbol.name, label: symbol.name, path: rel, line: symbol.line, confidence: python ? 1 : .8, extractor, contentHash: hash(`${symbol.kind}:${symbol.name}`) });
+    addEdge({ type: 'defines', source: `file:${rel}`, target: id, line: symbol.line, resolved: true, confidence: python ? 1 : .8, extractor });
+  }
+  for (const item of entry.imports) addDependency(entry.path, item.specifier, item.line, entry.language, item.standard);
   const imports = new Map();
-  while ((match = importClause.exec(source))) {
-    const target = resolveJsImport(path, match[2]);
-    if (!target) continue;
-    const targetRel = posix(relative(root, target));
-    for (const binding of bindingsOf(match[1])) imports.set(binding.local, { file: targetRel, imported: binding.imported });
+  for (const binding of entry.bindings) {
+    const target = resolveJsImport(entry.path, binding.specifier);
+    if (target) imports.set(binding.local, { file: posix(relative(root, target)), imported: binding.imported });
   }
   fileImports.set(rel, imports);
 }
@@ -208,34 +284,28 @@ for (const path of jsFiles) {
 // Three tiers of truth, borrowed from Benzi's description: a call resolved to one definition is
 // proven; a call whose name matches several definitions keeps every candidate rather than being
 // collapsed into a confident guess; a call that resolves to nothing is counted, never invented.
+// JavaScript only: a JS call must never resolve to a Python definition that happens to share a
+// name, so the ambiguity index is built per language rather than across the whole repo.
 const byName = new Map();
-for (const [rel, symbols] of fileSymbols) for (const symbol of symbols) {
+for (const [rel, symbols] of fileSymbols) for (const symbol of (entries.get(rel).language === 'javascript' ? symbols : [])) {
   if (!byName.has(symbol.name)) byName.set(symbol.name, []);
   byName.get(symbol.name).push(`symbol:${rel}#${symbol.kind}:${symbol.name}`);
 }
 const symbolId = (rel, name) => { const found = (fileSymbols.get(rel) || []).find(s => s.name === name); return found ? `symbol:${rel}#${found.kind}:${found.name}` : null; };
 let unresolvedCalls = 0;
-for (const path of jsFiles) {
-  const rel = posix(relative(root, path)), source = sources.get(rel), symbols = fileSymbols.get(rel);
-  if (!symbols || !symbols.length) continue;
-  const lines = source.split('\n'), imports = fileImports.get(rel);
-  // Each top-level declaration owns the lines up to the next one, which is enough to attribute a
-  // call to its enclosing symbol without building a scope tree.
-  for (let index = 0; index < symbols.length; index++) {
-    const symbol = symbols[index], from = `symbol:${rel}#${symbol.kind}:${symbol.name}`;
-    const end = index + 1 < symbols.length ? symbols[index + 1].line - 1 : lines.length;
-    const body = lines.slice(symbol.line - 1, end).join('\n');
-    const inherit = extendsSite.exec(lines[symbol.line - 1] || '');
-    if (inherit) {
-      const parent = imports.has(inherit[1]) ? symbolId(imports.get(inherit[1]).file, inherit[1]) : symbolId(rel, inherit[1]);
+for (const [rel, entry] of entries) {
+  if (entry.language === 'python' || !entry.calls || !entry.calls.length) continue;
+  const symbols = fileSymbols.get(rel) || [], imports = fileImports.get(rel) || new Map();
+  for (let index = 0; index < entry.calls.length; index++) {
+    const symbol = symbols[index];
+    if (!symbol) continue;
+    const from = `symbol:${rel}#${symbol.kind}:${symbol.name}`, site = entry.calls[index];
+    if (site.inherits) {
+      const binding = imports.get(site.inherits);
+      const parent = binding ? symbolId(binding.file, site.inherits) : symbolId(rel, site.inherits);
       if (parent && parent !== from) addEdge({ type: 'inherits', source: from, target: parent, tier: 'proven', resolved: true, confidence: .8, extractor: 'conservative-js-calls' });
     }
-    const seen = new Set();
-    let call; callSite.lastIndex = 0;
-    while ((call = callSite.exec(body))) {
-      const name = call[1];
-      if (CALL_KEYWORDS.has(name) || name === symbol.name || seen.has(name)) continue;
-      seen.add(name);
+    for (const name of site.names) {
       const local = symbolId(rel, name);
       if (local) { addEdge({ type: 'calls', source: from, target: local, tier: 'proven', resolved: true, confidence: .75, extractor: 'conservative-js-calls' }); continue; }
       const binding = imports.get(name);
@@ -244,22 +314,10 @@ for (const path of jsFiles) {
         if (target) { addEdge({ type: 'calls', source: from, target, tier: 'proven', resolved: true, confidence: .7, extractor: 'conservative-js-calls' }); continue; }
       }
       const matches = byName.get(name);
-      if (matches && matches.length && matches.length <= 8) {
-        addEdge({ type: 'calls', source: from, target: matches[0], tier: 'ambiguous', candidates: matches.slice(0, 8), resolved: false, confidence: .3, extractor: 'conservative-js-calls' });
-        continue;
-      }
+      if (matches && matches.length && matches.length <= 8) { addEdge({ type: 'calls', source: from, target: matches[0], tier: 'ambiguous', candidates: matches.slice(0, 8), resolved: false, confidence: .3, extractor: 'conservative-js-calls' }); continue; }
       unresolvedCalls += 1;
     }
   }
-}
-sources.clear();
-
-const pythonFiles = files.filter(file => extname(file) === '.py');
-if (pythonFiles.length) {
-  const script = `import ast,json,sys\nr=[]\nclass Scan(ast.NodeVisitor):\n def __init__(self): self.imports=[]; self.symbols=[]; self.scope=[]\n def visit_Import(self,n): self.imports += [{'specifier':a.name,'line':n.lineno,'standard':a.name.split('.')[0] in sys.stdlib_module_names} for a in n.names]\n def visit_ImportFrom(self,n): self.imports.append({'specifier':'.'*n.level+(n.module or ''),'line':n.lineno,'standard':n.level==0 and (n.module or '').split('.')[0] in sys.stdlib_module_names})\n def symbol(self,n,kind):\n  q='.'.join(self.scope+[n.name]); self.symbols.append({'name':n.name,'qualifiedName':q,'kind':kind,'line':n.lineno}); self.scope.append(n.name); self.generic_visit(n); self.scope.pop()\n def visit_ClassDef(self,n): self.symbol(n,'class')\n def visit_FunctionDef(self,n): self.symbol(n,'function')\n def visit_AsyncFunctionDef(self,n): self.symbol(n,'function')\nfor p in json.load(sys.stdin):\n try:\n  s=Scan(); s.visit(ast.parse(open(p,encoding='utf-8').read(),filename=p)); r.append({'path':p,'imports':s.imports,'symbols':s.symbols})\n except (OSError,SyntaxError) as e: r.append({'path':p,'error':str(e)})\nprint(json.dumps(r))`;
-  const parsed = spawnSync('python3', ['-c', script], { input: JSON.stringify(pythonFiles), encoding: 'utf8' });
-  if (parsed.status !== 0) warnings.push(`Python AST unavailable: ${(parsed.stderr || 'python3 failed').trim()}`);
-  else for (const result of JSON.parse(parsed.stdout)) { if (result.error) { warnings.push(`${posix(relative(root, result.path))}: ${result.error}`); continue; } for (const item of result.imports) addDependency(result.path, item.specifier, item.line, 'python', item.standard); for (const item of result.symbols) { const rel = posix(relative(root, result.path)), id = `symbol:${rel}#${item.kind}:${item.qualifiedName}`; addNode({ id, type: 'symbol', ...item, label: item.qualifiedName, path: rel, confidence: 1, extractor: 'python-stdlib-ast', contentHash: hash(`${item.kind}:${item.qualifiedName}`) }); addEdge({ type: 'defines', source: fileId(result.path), target: id, line: item.line, resolved: true, confidence: 1, extractor: 'python-stdlib-ast' }); } }
 }
 
 const revisionResult = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
@@ -272,5 +330,5 @@ const esc = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;'
 const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(graph.project)} code graph</title><style>body{font:14px system-ui;margin:2rem;color:#172033;background:#f7f8fa}header{display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap}input{padding:.6rem;min-width:20rem}section{display:grid;grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));gap:1rem}.card{background:white;border:1px solid #d9deea;border-radius:10px;padding:1rem}.node{padding:.45rem;border-left:4px solid #748ffc;margin:.35rem 0;background:#f8f9ff}.package{border-color:#2f9e44}.unresolved{border-color:#e8590c}.symbol{border-color:#7950f2}small{color:#667085}code{word-break:break-all}</style><header><h1>${esc(graph.project)}</h1><small>${sortedNodes.length} nodes · ${sortedEdges.length} edges · ${sourceHash.slice(0,12)}</small><input id="q" type="search" placeholder="Filter paths, symbols, packages" aria-label="Filter graph"></header><section><div class="card"><h2>Nodes</h2>${sortedNodes.map(n => `<div class="node ${n.type}" data-search="${esc(`${n.id} ${n.label}`.toLowerCase())}"><strong>${esc(n.label)}</strong> <small>${n.type} · ${n.confidence}</small><br><code>${esc(n.id)}</code></div>`).join('')}</div><div class="card"><h2>Relationships</h2>${sortedEdges.map(e => `<div class="node" data-search="${esc(`${e.source} ${e.target} ${e.specifier ?? ''}`.toLowerCase())}"><code>${esc(e.source)}</code> → <code>${esc(e.target)}</code><br><small>${e.type}${e.specifier ? ` · ${esc(e.specifier)}` : ''}</small></div>`).join('')}</div></section><script>q.oninput=()=>document.querySelectorAll('[data-search]').forEach(e=>e.hidden=!e.dataset.search.includes(q.value.toLowerCase()))</script></html>\n`;
 function writeChanged(path, content) { if (existsSync(path) && readFileSync(path,'utf8') === content) return false; writeFileSync(path,content); return true; }
 const placeholder = existsSync(outPath) && readFileSync(outPath,'utf8').includes('{{');
-if (write || placeholder) { mkdirSync(outDir,{recursive:true}); const changed = [writeChanged(outPath,json),writeChanged(join(outDir,'graph.dot'),dot),writeChanged(join(outDir,'graph.html'),html)].filter(Boolean).length; console.error(`${changed ? 'wrote' : 'unchanged'} ${sortedNodes.length} nodes, ${sortedEdges.length} edges -> ${posix(relative(root,outDir)) || '.'}`); }
+if (write || placeholder) { mkdirSync(outDir,{recursive:true}); writeFileSync(cachePath, JSON.stringify({ version: CACHE_VERSION, files: nextCache })); const changed = [writeChanged(outPath,json),writeChanged(join(outDir,'graph.dot'),dot),writeChanged(join(outDir,'graph.html'),html)].filter(Boolean).length; console.error(`${changed ? 'wrote' : 'unchanged'} ${sortedNodes.length} nodes, ${sortedEdges.length} edges (${extracted} extracted, ${reused} reused) -> ${posix(relative(root,outDir)) || '.'}`); }
 else { process.stdout.write(json); console.error(`dry run: ${sortedNodes.length} nodes, ${sortedEdges.length} edges; pass --write to save`); }

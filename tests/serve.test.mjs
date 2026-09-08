@@ -123,3 +123,33 @@ test('serves the symbol map with numeric edge endpoints', async (t) => {
   assert(call, 'the cross-file call is present');
   assert.equal(flat[call[1]], 'src/ui/format.ts#format', 'and points at the definition it resolved to');
 });
+
+test('reindexes on a source edit and reports it, without any command being run', async (t) => {
+  const repo = project();
+  const { child, base } = await start(repo);
+  t.after(() => child.kill());
+
+  const stream = await fetch(base + '/events');
+  const reader = stream.body.getReader();
+  await reader.read();                       // the initial comment frame
+  const decoder = new TextDecoder();
+
+  // Nothing here runs the CLI: the watcher alone has to notice and rebuild.
+  writeFileSync(join(repo, 'src', 'ui', 'added.ts'), 'export function addedByWatcher() {}\n');
+
+  const deadline = Date.now() + 15000;
+  let seenIndexing = false, seenChange = false;
+  while (Date.now() < deadline && !(seenIndexing && seenChange)) {
+    const next = await Promise.race([reader.read(), new Promise((resolve) => setTimeout(() => resolve({ value: null }), 15000))]);
+    if (!next.value) break;
+    const text = decoder.decode(next.value);
+    if (text.indexOf('event: indexing') !== -1) seenIndexing = true;
+    if (text.indexOf('event: change') !== -1) seenChange = true;
+  }
+  await reader.cancel();
+  assert(seenIndexing, 'the panel is told indexing started');
+  assert(seenChange, 'and told the index changed');
+
+  const data = await (await fetch(base + '/api/map')).json();
+  assert(data.files.some((f) => f.path === 'src/ui/added.ts'), 'the new file is in the index');
+});

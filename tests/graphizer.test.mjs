@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -149,4 +149,40 @@ test('resolves calls into proven and ambiguous tiers, and never invents the rest
   assert(graph.stats.unresolvedCalls > 0, 'unknown calls are counted');
 
   assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/main.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
+});
+
+test('incremental reindex reuses unchanged files and matches a full rebuild', () => {
+  const root = fixture();
+  const out = join(root, '.genesis', 'index', 'graph.json');
+  const read = () => JSON.parse(readFileSync(out, 'utf8'));
+  // Counts are reported on stderr, never in the graph: the graph has to stay a pure function of
+  // the sources, or an unchanged tree would rewrite it on every run.
+  const run = (extra = []) => {
+    const result = spawnSync(process.execPath, [graphizer, root, '--write', ...extra], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const counts = /\((\d+) extracted, (\d+) reused\)/.exec(result.stderr);
+    assert(counts, `no counts in stderr: ${result.stderr}`);
+    return { extracted: Number(counts[1]), reused: Number(counts[2]) };
+  };
+
+  const cold = run();
+  assert.equal(cold.reused, 0, 'a cold run has nothing to reuse');
+  assert(cold.extracted > 0);
+
+  const warm = run();
+  assert.equal(warm.extracted, 0, 'an unchanged tree re-reads nothing');
+  assert.equal(warm.reused, cold.extracted);
+
+  writeFileSync(join(root, 'src', 'one', 'index.ts'), 'export function one() {}\nexport function two() {}\n');
+  const edited = run();
+  assert.equal(edited.extracted, 1, 'only the edited file is re-read');
+  const after = read();
+  assert(after.nodes.some(({ id }) => id === 'symbol:src/one/index.ts#function:two'), 'and its new symbol appears');
+
+  // The whole point: incremental must not be a different answer from a full rebuild.
+  run(['--full']);
+  const full = read();
+  assert.deepEqual(after.nodes, full.nodes);
+  assert.deepEqual(after.edges, full.edges);
+  assert.equal(after.sourceHash, full.sourceHash);
 });

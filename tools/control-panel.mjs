@@ -439,6 +439,10 @@ function loadState() {
 var events = new EventSource('/events');
 events.onopen = function () { $('dot').classList.add('on'); $('livetext').textContent = 'live'; };
 events.onerror = function () { $('dot').classList.remove('on'); $('livetext').textContent = 'reconnecting'; };
+events.addEventListener('indexing', function (e) {
+  var data = JSON.parse(e.data);
+  $('livetext').textContent = data.state === 'start' ? 'indexing' : (data.ok ? 'live' : 'index failed');
+});
 events.addEventListener('change', function () {
   $('dot').classList.remove('beat');
   void $('dot').offsetWidth;

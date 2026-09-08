@@ -153,9 +153,12 @@ Measured against sbl-app (351k LOC, 3.7k files) unless noted.
 - [x] `genesis serve`: loopback, read-only, SSE liveness, aggregated graph API
 - [x] canvas graph view, deterministic layout, drill-down, node detail
 - [x] both branches indexed into worktrees (`origin/main`, `origin/release/2sep26`)
-- [ ] `calls`, `references` and `exports` edges
-- [ ] three-tier truth tagging on edges
-- [ ] incremental reindex keyed on per-file contentHash
+- [x] `calls` and `inherits` edges -- 4,027 proven, 2,003 candidates, 12,305 honestly unresolved
+- [ ] `references` and `exports` edges
+- [x] three-tier truth tagging on call edges (proven / ambiguous with candidates / counted)
+- [x] incremental reindex, keyed on size and mtime rather than content hash
+- [x] source watcher: editing code reindexes and updates the panel with no command run
+- [x] symbol treemap view with call filaments and per-edge-kind toggles
 - [ ] `genesis query` CLI and the MCP surface
 - [ ] graph-aware context ranking, symptom map, scope cards
 - [ ] activity timeline from attempts/controls/traces
@@ -166,3 +169,22 @@ TypeScript compiler cannot be resolved from it and the regex extractor is the pa
 that actually runs there; improving it was worth more than reaching for the
 compiler. And `contextPacket` still parses the whole graph on every call, which is
 the reason Phase 2 needs a query-friendly sidecar rather than a full parse.
+
+## Real-time indexing, as built
+
+`genesis serve` watches the source tree as well as `.genesis`. A code edit debounces for 400ms,
+runs an incremental reindex, and the panel is told twice: an `indexing` event around the run and
+a `change` event when the graph lands.
+
+Incremental means extraction is cached per file, keyed on size and mtime, so an unchanged file is
+never opened. Resolution still runs across the whole file set every time, because adding one file
+can resolve an import elsewhere or turn a proven call into an ambiguous one; a cache that skipped
+that would drift from the truth. Measured on sbl-app: cold 3.3s, unchanged 0.9s, one edited file
+0.9s, and through the watcher end to end 1.3s. The incremental graph is byte-identical to
+`--full`, which is the property that makes the cache safe to trust.
+
+Two things worth knowing. Change detection is size and mtime, not content, which is the same
+trade the panel's own file cache makes; `--full` forces a rebuild if you ever need it. And the
+run counters are reported on stderr rather than written into `graph.json`, because the graph has
+to stay a pure function of the sources -- putting them in the file made an unchanged tree rewrite
+its own index on every run.
