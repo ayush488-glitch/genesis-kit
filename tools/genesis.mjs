@@ -686,6 +686,18 @@ function commandDashboard(parsed) {
   console.log(path);
 }
 
+function commandServe(parsed) {
+  const repo = resolve(parsed.positional[0] || '.');
+  loadState(repo);
+  const serve = join(dirname(fileURLToPath(import.meta.url)), 'serve.mjs');
+  const args = [serve, repo];
+  if (parsed.options.port) args.push('--port', String(parsed.options.port));
+  if (parsed.options.open) args.push('--open');
+  // Runs in the foreground until interrupted: it is a viewer, not a daemon, and it holds no lock.
+  const result = spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.status !== 0 && result.status !== null) throw new Error('control panel exited unexpectedly');
+}
+
 function commandTrace(parsed) {
   const repo = resolve(parsed.positional[0] || '.');
   loadState(repo);
@@ -1502,6 +1514,7 @@ Usage:
   genesis agent connect <repo> [--codex] [--claude] [--write]
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
+  genesis serve <repo> [--port N] [--open]   live control panel, read-only
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
@@ -1531,6 +1544,7 @@ async function main(raw) {
   if (command === 'run') return commandRun(parsed);
   if (command === 'evaluate') return commandEvaluate(parsed);
   if (command === 'recover') return commandRecover(parsed);
+  if (command === 'serve') return commandServe(parsed);
   const nestedCommands = ['task', 'control', 'record', 'spec', 'plan', 'agent', 'learn', 'authorize', 'incident', 'workflow'];
   const repo = resolve((nestedCommands.includes(command) ? parseArgs(raw.slice(2)) : parsed).positional[0] || '.');
   return withLock(repo, () => dispatch(command, parsed, raw));
