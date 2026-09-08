@@ -154,6 +154,7 @@ Measured against sbl-app (351k LOC, 3.7k files) unless noted.
 - [x] canvas graph view, deterministic layout, drill-down, node detail
 - [x] both branches indexed into worktrees (`origin/main`, `origin/release/2sep26`)
 - [x] `calls` and `inherits` edges -- 4,027 proven, 2,003 candidates, 12,305 honestly unresolved
+- [x] Python calls and inheritance, indexed per language so a call never crosses languages
 - [ ] `references` and `exports` edges
 - [x] three-tier truth tagging on call edges (proven / ambiguous with candidates / counted)
 - [x] incremental reindex, keyed on size and mtime rather than content hash
@@ -188,3 +189,16 @@ trade the panel's own file cache makes; `--full` forces a rebuild if you ever ne
 run counters are reported on stderr rather than written into `graph.json`, because the graph has
 to stay a pure function of the sources -- putting them in the file made an unchanged tree rewrite
 its own index on every run.
+
+## Language coverage, verified
+
+Run against two unrelated repositories with no configuration, to check nothing had quietly
+specialised to the codebase it was developed against:
+
+- Benzi (Python): 8 files, 69 symbols, 54 imports, 96 call edges. Works.
+- bough (Go): 46 Go files, 4 indexed. Go is not extracted at all.
+
+So the honest claim is a general-purpose upgrade for JavaScript, TypeScript and Python projects.
+Go, Rust, Java, Ruby and the rest index as an almost empty graph. Adding them means pluggable
+extractors, most likely tree-sitter, which is the largest remaining item and would end the
+zero-dependency property.

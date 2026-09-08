@@ -186,3 +186,36 @@ test('incremental reindex reuses unchanged files and matches a full rebuild', ()
   assert.deepEqual(after.edges, full.edges);
   assert.equal(after.sourceHash, full.sourceHash);
 });
+
+test('extracts Python calls and inheritance, kept separate from JavaScript', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-py-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('pkg/base.py', 'class Base:\n    def run(self):\n        return 1\n');
+  write('pkg/worker.py', [
+    'from .base import Base',
+    'from .util import helper',
+    '',
+    'class Worker(Base):',                 // inheritance across files
+    '    def work(self):',
+    '        helper()',                    // imported call
+    '        return self.run()',           // attribute call, resolves by bare name
+    '',
+    'def start():',
+    '    w = Worker()',                    // local class
+    '    return w.work()',
+  ].join('\n') + '\n');
+  write('pkg/util.py', 'def helper():\n    return 2\n');
+  // Same name in JavaScript: a Python call must never resolve to it.
+  write('web/app.js', 'export function helper() {}\n');
+
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const call = (from, to) => graph.edges.find((e) => e.type === 'calls' && e.source === from && e.target === to);
+
+  assert(call('symbol:pkg/worker.py#function:Worker.work', 'symbol:pkg/util.py#function:helper'), 'call to an imported Python function');
+  assert(call('symbol:pkg/worker.py#function:Worker.work', 'symbol:pkg/base.py#function:Base.run'), 'attribute call resolved by bare name against a qualified symbol');
+  assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:pkg/worker.py#class:Worker' && e.target === 'symbol:pkg/base.py#class:Base'));
+
+  const crossed = graph.edges.filter((e) => e.type === 'calls' && /\.py#/.test(e.source) && /web\/app\.js/.test(e.target));
+  assert.equal(crossed.length, 0, 'a Python call never resolves into JavaScript');
+  assert(graph.edges.some((e) => e.extractor === 'python-stdlib-ast-calls'));
+});

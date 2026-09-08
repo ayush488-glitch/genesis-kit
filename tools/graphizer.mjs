@@ -224,7 +224,38 @@ function extractJs(source) {
   return { symbols, imports, bindings, calls };
 }
 
-const pythonScript = `import ast,json,sys\nr=[]\nclass Scan(ast.NodeVisitor):\n def __init__(self): self.imports=[]; self.symbols=[]; self.scope=[]\n def visit_Import(self,n): self.imports += [{'specifier':a.name,'line':n.lineno,'standard':a.name.split('.')[0] in sys.stdlib_module_names} for a in n.names]\n def visit_ImportFrom(self,n): self.imports.append({'specifier':'.'*n.level+(n.module or ''),'line':n.lineno,'standard':n.level==0 and (n.module or '').split('.')[0] in sys.stdlib_module_names})\n def symbol(self,n,kind):\n  q='.'.join(self.scope+[n.name]); self.symbols.append({'name':n.name,'qualifiedName':q,'kind':kind,'line':n.lineno}); self.scope.append(n.name); self.generic_visit(n); self.scope.pop()\n def visit_ClassDef(self,n): self.symbol(n,'class')\n def visit_FunctionDef(self,n): self.symbol(n,'function')\n def visit_AsyncFunctionDef(self,n): self.symbol(n,'function')\nfor p in json.load(sys.stdin):\n try:\n  s=Scan(); s.visit(ast.parse(open(p,encoding='utf-8').read(),filename=p)); r.append({'path':p,'imports':s.imports,'symbols':s.symbols})\n except (OSError,SyntaxError) as e: r.append({'path':p,'error':str(e)})\nprint(json.dumps(r))`;
+const pythonScript = `import ast,json,sys
+r=[]
+class Scan(ast.NodeVisitor):
+ def __init__(self): self.imports=[]; self.symbols=[]; self.calls=[]; self.bindings=[]; self.scope=[]; self.current=None
+ def visit_Import(self,n):
+  for a in n.names:
+   self.imports.append({'specifier':a.name,'line':n.lineno,'standard':a.name.split('.')[0] in sys.stdlib_module_names})
+   self.bindings.append({'local':(a.asname or a.name).split('.')[0],'imported':'*','specifier':a.name})
+ def visit_ImportFrom(self,n):
+  spec='.'*n.level+(n.module or '')
+  self.imports.append({'specifier':spec,'line':n.lineno,'standard':n.level==0 and (n.module or '').split('.')[0] in sys.stdlib_module_names})
+  for a in n.names: self.bindings.append({'local':a.asname or a.name,'imported':a.name,'specifier':spec})
+ def symbol(self,n,kind,inherits=None):
+  q='.'.join(self.scope+[n.name]); i=len(self.symbols)
+  self.symbols.append({'name':n.name,'qualifiedName':q,'kind':kind,'line':n.lineno}); self.calls.append({'names':[],'inherits':inherits})
+  prev=self.current; self.current=i; self.scope.append(n.name); self.generic_visit(n); self.scope.pop(); self.current=prev
+ def visit_Call(self,n):
+  f=n.func; name=f.id if isinstance(f,ast.Name) else (f.attr if isinstance(f,ast.Attribute) else None)
+  if name and self.current is not None:
+   names=self.calls[self.current]['names']
+   if name not in names: names.append(name)
+  self.generic_visit(n)
+ def visit_ClassDef(self,n):
+  bases=[b.id for b in n.bases if isinstance(b,ast.Name)]
+  self.symbol(n,'class',bases[0] if bases else None)
+ def visit_FunctionDef(self,n): self.symbol(n,'function')
+ def visit_AsyncFunctionDef(self,n): self.symbol(n,'function')
+for p in json.load(sys.stdin):
+ try:
+  s=Scan(); s.visit(ast.parse(open(p,encoding='utf-8').read(),filename=p)); r.append({'path':p,'imports':s.imports,'symbols':s.symbols,'calls':s.calls,'bindings':s.bindings})
+ except (OSError,SyntaxError) as e: r.append({'path':p,'error':str(e)})
+print(json.dumps(r))`;
 
 const entries = new Map();      // rel -> { path, language, contentHash, symbols, imports, bindings, calls, error }
 const stalePython = [];
@@ -249,7 +280,7 @@ if (stalePython.length) {
     for (const item of stalePython) {
       const result = results.get(item.path) || {};
       const contentHash = hash(readFileSync(item.path, 'utf8'));
-      const data = result.error ? { error: result.error, symbols: [], imports: [], bindings: [], calls: [] } : { symbols: result.symbols, imports: result.imports, bindings: [], calls: [] };
+      const data = result.error ? { error: result.error, symbols: [], imports: [], bindings: [], calls: [] } : { symbols: result.symbols, imports: result.imports, bindings: result.bindings, calls: result.calls };
       entries.set(item.rel, { ...data, path: item.path, language: 'python', contentHash });
       nextCache[item.rel] = { stamp: item.stamp, contentHash, data };
     }
@@ -275,7 +306,7 @@ for (const [rel, entry] of entries) {
   for (const item of entry.imports) addDependency(entry.path, item.specifier, item.line, entry.language, item.standard);
   const imports = new Map();
   for (const binding of entry.bindings) {
-    const target = resolveJsImport(entry.path, binding.specifier);
+    const target = python ? resolvePythonImport(entry.path, binding.specifier) : resolveJsImport(entry.path, binding.specifier);
     if (target) imports.set(binding.local, { file: posix(relative(root, target)), imported: binding.imported });
   }
   fileImports.set(rel, imports);
@@ -284,18 +315,31 @@ for (const [rel, entry] of entries) {
 // Three tiers of truth, borrowed from Benzi's description: a call resolved to one definition is
 // proven; a call whose name matches several definitions keeps every candidate rather than being
 // collapsed into a confident guess; a call that resolves to nothing is counted, never invented.
-// JavaScript only: a JS call must never resolve to a Python definition that happens to share a
-// name, so the ambiguity index is built per language rather than across the whole repo.
-const byName = new Map();
-for (const [rel, symbols] of fileSymbols) for (const symbol of (entries.get(rel).language === 'javascript' ? symbols : [])) {
-  if (!byName.has(symbol.name)) byName.set(symbol.name, []);
-  byName.get(symbol.name).push(`symbol:${rel}#${symbol.kind}:${symbol.name}`);
+// Indexed per language: a JavaScript call must never resolve to a Python definition that happens
+// to share a name.
+const byLanguage = { javascript: new Map(), python: new Map() };
+for (const [rel, symbols] of fileSymbols) {
+  const index = byLanguage[entries.get(rel).language];
+  for (const symbol of symbols) {
+    // Python symbols are stored qualified (Class.method); index the bare name too, since that is
+    // what a call site actually writes.
+    for (const key of new Set([symbol.name, symbol.name.split('.').pop()])) {
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(`symbol:${rel}#${symbol.kind}:${symbol.name}`);
+    }
+  }
 }
-const symbolId = (rel, name) => { const found = (fileSymbols.get(rel) || []).find(s => s.name === name); return found ? `symbol:${rel}#${found.kind}:${found.name}` : null; };
+const symbolId = (rel, name) => {
+  const symbols = fileSymbols.get(rel) || [];
+  const found = symbols.find(s => s.name === name) || symbols.find(s => s.name.split('.').pop() === name);
+  return found ? `symbol:${rel}#${found.kind}:${found.name}` : null;
+};
+const callExtractor = language => language === 'python' ? 'python-stdlib-ast-calls' : 'conservative-js-calls';
 let unresolvedCalls = 0;
 for (const [rel, entry] of entries) {
-  if (entry.language === 'python' || !entry.calls || !entry.calls.length) continue;
+  if (!entry.calls || !entry.calls.length) continue;
   const symbols = fileSymbols.get(rel) || [], imports = fileImports.get(rel) || new Map();
+  const byName = byLanguage[entry.language], confident = entry.language === 'python' ? 1 : .75;
   for (let index = 0; index < entry.calls.length; index++) {
     const symbol = symbols[index];
     if (!symbol) continue;
@@ -303,18 +347,18 @@ for (const [rel, entry] of entries) {
     if (site.inherits) {
       const binding = imports.get(site.inherits);
       const parent = binding ? symbolId(binding.file, site.inherits) : symbolId(rel, site.inherits);
-      if (parent && parent !== from) addEdge({ type: 'inherits', source: from, target: parent, tier: 'proven', resolved: true, confidence: .8, extractor: 'conservative-js-calls' });
+      if (parent && parent !== from) addEdge({ type: 'inherits', source: from, target: parent, tier: 'proven', resolved: true, confidence: entry.language === 'python' ? 1 : .8, extractor: callExtractor(entry.language) });
     }
     for (const name of site.names) {
       const local = symbolId(rel, name);
-      if (local) { addEdge({ type: 'calls', source: from, target: local, tier: 'proven', resolved: true, confidence: .75, extractor: 'conservative-js-calls' }); continue; }
+      if (local) { addEdge({ type: 'calls', source: from, target: local, tier: 'proven', resolved: true, confidence: confident, extractor: callExtractor(entry.language) }); continue; }
       const binding = imports.get(name);
       if (binding) {
         const target = symbolId(binding.file, binding.imported === 'default' || binding.imported === '*' ? name : binding.imported);
-        if (target) { addEdge({ type: 'calls', source: from, target, tier: 'proven', resolved: true, confidence: .7, extractor: 'conservative-js-calls' }); continue; }
+        if (target) { addEdge({ type: 'calls', source: from, target, tier: 'proven', resolved: true, confidence: .7, extractor: callExtractor(entry.language) }); continue; }
       }
       const matches = byName.get(name);
-      if (matches && matches.length && matches.length <= 8) { addEdge({ type: 'calls', source: from, target: matches[0], tier: 'ambiguous', candidates: matches.slice(0, 8), resolved: false, confidence: .3, extractor: 'conservative-js-calls' }); continue; }
+      if (matches && matches.length && matches.length <= 8) { addEdge({ type: 'calls', source: from, target: matches[0], tier: 'ambiguous', candidates: matches.slice(0, 8), resolved: false, confidence: .3, extractor: callExtractor(entry.language) }); continue; }
       unresolvedCalls += 1;
     }
   }

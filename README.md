@@ -40,17 +40,60 @@ Genesis runs locally on **Node.js 18+ with no npm dependencies**. Coding hosts s
 
 The canonical record is `.genesis/project.json`. `KICKOFF.md`, `PLAN.md`, the dashboard and code graph are generated views. Raw redacted event traces stay in the ignored `.genesis/local/` directory.
 
+### Language coverage
+
+The indexer is static, dependency-free and deliberately conservative about what it claims.
+
+| Language | Files and imports | Symbols | Calls and inheritance |
+| :--- | :--- | :--- | :--- |
+| JavaScript, TypeScript, JSX, TSX | Yes, including `tsconfig` path aliases and pnpm/npm/yarn workspace packages | Yes, top-level declarations | Yes |
+| Python | Yes | Yes, via the standard-library AST | Yes |
+| Everything else | No | No | No |
+
+A Go, Rust, Java or Ruby project will index as an almost empty graph. That is a limit of the
+current extractors, not a configuration problem.
+
 ## Local control panel
+
+Two panels ship. The generated HTML file is a static snapshot; `genesis serve` is a live view of
+the index.
+
+```sh
+genesis serve . --open        # live: watches sources, reindexes on save, streams updates
+genesis dashboard . --open    # static snapshot file, no server
+npm run demo -- --open        # isolated synthetic project from a kit checkout
+```
+
+`genesis serve` runs a loopback-only, **read-only** server. It never writes state and never runs
+commands, so approvals and gates stay in the CLI where the audit trail is. It also stays outside
+the repository write lock, because holding that lock for a browsing session would block every
+other command.
+
+The centre view is a squarified treemap of the repository: directories contain files, files
+contain a cell per symbol, and calls are drawn as filaments across the map. A file's position on
+screen is its position in the tree, so the picture is stable between runs. The legend toggles
+call, candidate and inheritance edges independently; candidates are dashed, because a maybe
+should not be drawn like a fact. Hovering a file isolates its call traffic; clicking inspects it.
+
+Editing a source file reindexes incrementally and updates the open page with no reload and no
+command. Extraction is cached per file on size and mtime, so unchanged files are never reopened,
+while resolution always runs over the whole file set: adding one file can resolve an import
+elsewhere or turn a proven call into an ambiguous one. On a 351k-line monorepo a cold index takes
+about 3.3 seconds and a single-file edit about 0.9 seconds, and the incremental result is
+byte-identical to `--full`. Pass `--no-watch` to disable source watching, or `graphizer --full` to
+force a rebuild.
+
+Live source watching needs recursive `fs.watch`, which is available on macOS and Windows on any
+supported Node, and on Linux from Node 20.13. Where it is unavailable the server says so and the
+panel still works; rerun `genesis index` after edits.
 
 ![Genesis control panel: layered Overview, Tasks, and Evidence views](docs/assets/control-panel-showcase.jpg)
 
-```sh
-genesis dashboard . --open
-# Or preview an isolated, synthetic project from a kit checkout:
-npm run demo -- --open
-```
-
-The panel brings together the active next action, task search and state filters, evidence receipts, execution/recovery history, learning proposals and context metrics. It works as a local HTML file, preserves filters and navigation across refreshes, and adapts to narrow screens. Its buttons **copy CLI commands**; they do not execute commands or approve work. Refresh reloads the generated snapshot; rerun `genesis dashboard` after external source changes to recompute evidence freshness.
+The static panel brings together the active next action, task search and state filters, evidence
+receipts, execution/recovery history, learning proposals and context metrics. It works as a local
+HTML file, preserves filters and navigation across refreshes, and adapts to narrow screens. Its
+buttons **copy CLI commands**; they do not execute commands or approve work. Rerun
+`genesis dashboard` after external source changes to recompute evidence freshness.
 
 ## Efficient context and reusable briefs
 
