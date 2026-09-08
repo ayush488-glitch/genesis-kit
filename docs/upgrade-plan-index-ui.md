@@ -1,6 +1,8 @@
 # Upgrade plan: real code index, pull-based retrieval, live graph UI
 
-Status: agreed, not yet implemented. Written 2026-09-08.
+Status: written 2026-09-08. Phase 1 and the Phase 3 panel have landed on
+`feat/code-index-and-live-graph`; Phase 2 retrieval is not started. Progress is
+tracked in the checklist at the end of this document.
 
 Goal: Genesis should index a large real codebase accurately, let an agent *query*
 that index instead of receiving a fixed guess, and show the result in a live
@@ -139,3 +141,28 @@ oversights: the single global writer lock serialises all mutations repo-wide;
 commands run unsandboxed with full host permissions; runtime-gate freshness depends
 on the project supplying a truthful verifier; `inputManifest()` rehashes every
 tracked file on essentially every state-changing command, with no incremental cache.
+
+## Progress
+
+Measured against sbl-app (351k LOC, 3.7k files) unless noted.
+
+- [x] tsconfig `paths` and pnpm workspace resolution -- unresolved edges 9,617 -> 4,030
+- [x] real declaration kinds -- symbols 2,738 -> 8,813, files with none 58% -> 3%
+- [x] `cleanup` schema mismatch fixed, with the regression test that was missing
+- [x] graph.json slimmed 22MB -> 13MB by dropping derivable fields (schema 2)
+- [x] `genesis serve`: loopback, read-only, SSE liveness, aggregated graph API
+- [x] canvas graph view, deterministic layout, drill-down, node detail
+- [x] both branches indexed into worktrees (`origin/main`, `origin/release/2sep26`)
+- [ ] `calls`, `references` and `exports` edges
+- [ ] three-tier truth tagging on edges
+- [ ] incremental reindex keyed on per-file contentHash
+- [ ] `genesis query` CLI and the MCP surface
+- [ ] graph-aware context ranking, symptom map, scope cards
+- [ ] activity timeline from attempts/controls/traces
+- [ ] branch-to-branch graph diff
+
+Two facts worth carrying forward. sbl-app has no `node_modules` installed, so the
+TypeScript compiler cannot be resolved from it and the regex extractor is the path
+that actually runs there; improving it was worth more than reaching for the
+compiler. And `contextPacket` still parses the whole graph on every call, which is
+the reason Phase 2 needs a query-friendly sidecar rather than a full parse.
