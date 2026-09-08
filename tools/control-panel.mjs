@@ -91,6 +91,14 @@ h2:first-child{margin-top:0}
 
 <script>
 var $ = function (id) { return document.getElementById(id); };
+// Everything below is untrusted: project.json is written by agents and humans, and symbol names
+// come from the indexed source. A name like Result<T> breaks the markup; an outcome containing a
+// tag would run in the panel.
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 var canvas = $('c'), ctx = canvas.getContext('2d'), tip = $('tip');
 
 var mapData = null;          // { files, edges, stats }
@@ -100,7 +108,7 @@ var owner = null;            // Int32Array symbol index -> file index
 var view = { x: 0, y: 0, k: 1 };
 var pan = null, hovered = -1, focusPath = '', filter = '';
 var show = [true, true, true];   // calls, candidates, inheritance
-var pulse = 0, redrawTimer = null;
+var pulse = 0, redrawTimer = null, framed = false;
 
 function fetchMap() {
   return fetch('/api/map').then(function (r) { return r.json(); }).then(function (data) {
@@ -111,7 +119,9 @@ function fetchMap() {
     var s = data.stats;
     $('stats').textContent = s.symbols + ' nodes, ' + s.calls + ' edges (+' + s.candidates + ' possible), ' + s.files + ' files';
     buildLayout();
-    fit();
+    // Only frame the view when the reader has not chosen one; a save must not yank them back out
+    // of the directory they zoomed into.
+    if (!framed) { fit(); framed = true; }
     schedule(true);
   });
 }
@@ -378,7 +388,7 @@ addEventListener('mousemove', function (e) {
   if (hit >= 0) {
     var file = rects[hit].file, rect = canvas.getBoundingClientRect();
     tip.classList.add('on');
-    tip.innerHTML = file.path + '<span class="s">' + file.symbols.length + ' symbols</span>';
+    tip.innerHTML = esc(file.path) + '<span class="s">' + file.symbols.length + ' symbols</span>';
     tip.style.left = Math.min(e.clientX - rect.left + 14, rect.width - tip.offsetWidth - 8) + 'px';
     tip.style.top = (e.clientY - rect.top + 14) + 'px';
   } else tip.classList.remove('on');
@@ -403,18 +413,19 @@ canvas.addEventListener('dblclick', function (e) {
 
 function inspect(path) {
   return fetch('/api/node?id=' + encodeURIComponent(path)).then(function (r) { return r.json(); }).then(function (data) {
+    if (data.missing) { $('detail').innerHTML = '<div class="hint">No index for this path yet. Run <code>genesis index .</code>.</div>'; return; }
     var list = function (items, empty) {
       if (!items.length) return '<div class="hint">' + empty + '</div>';
-      return items.map(function (d) { return '<div class="dep"><span>' + d.target + '</span><b>' + d.weight + '</b></div>'; }).join('');
+      return items.map(function (d) { return '<div class="dep"><span>' + esc(d.target) + '</span><b>' + esc(d.weight) + '</b></div>'; }).join('');
     };
     $('detail').innerHTML =
-      '<h2>Selected</h2><div class="mono" style="word-break:break-all;color:var(--amber)">' + path + '</div>' +
-      '<div class="row"><span>files</span><b>' + data.files + '</b></div>' +
-      '<div class="row"><span>symbols</span><b>' + data.symbolCount + '</b></div>' +
+      '<h2>Selected</h2><div class="mono" style="word-break:break-all;color:var(--amber)">' + esc(path) + '</div>' +
+      '<div class="row"><span>files</span><b>' + esc(data.files) + '</b></div>' +
+      '<div class="row"><span>symbols</span><b>' + esc(data.symbolCount) + '</b></div>' +
       '<h2>Depends on</h2>' + list(data.dependsOn, 'Nothing outside itself.') +
       '<h2>Depended on by</h2>' + list(data.dependedOnBy, 'Nothing imports this.') +
       '<h2>Symbols' + (data.symbolCount > data.symbols.length ? ' (first ' + data.symbols.length + ')' : '') + '</h2>' +
-      (data.symbols.map(function (s) { return '<div class="sym"><span class="k">' + s.kind + '</span><span class="n" title="' + s.path + ':' + s.line + '">' + s.name + '</span></div>'; }).join('') || '<div class="hint">No symbols extracted here.</div>');
+      (data.symbols.map(function (s) { return '<div class="sym"><span class="k">' + esc(s.kind) + '</span><span class="n" title="' + esc(s.path + ':' + s.line) + '">' + esc(s.name) + '</span></div>'; }).join('') || '<div class="hint">No symbols extracted here.</div>');
   });
 }
 
@@ -424,15 +435,15 @@ function loadState() {
     var life = data.lifecycle || {};
     $('state').innerHTML =
       '<h2>Lifecycle</h2>' +
-      '<div class="row"><span>phase</span><b>' + (life.phase || '&mdash;') + '</b></div>' +
-      '<div class="row"><span>status</span><b>' + (life.status || '&mdash;') + '</b></div>' +
-      '<div class="row"><span>active</span><b class="mono">' + (life.active_task || '&mdash;') + '</b></div>' +
-      (life.next_action ? '<h2>Next action</h2><div class="hint">' + life.next_action + '</div>' : '') +
-      (life.blocker ? '<h2>Blocker</h2><div class="hint" style="color:var(--bad)">' + life.blocker + '</div>' : '') +
+      '<div class="row"><span>phase</span><b>' + (esc(life.phase) || '&mdash;') + '</b></div>' +
+      '<div class="row"><span>status</span><b>' + (esc(life.status) || '&mdash;') + '</b></div>' +
+      '<div class="row"><span>active</span><b class="mono">' + (esc(life.active_task) || '&mdash;') + '</b></div>' +
+      (life.next_action ? '<h2>Next action</h2><div class="hint">' + esc(life.next_action) + '</div>' : '') +
+      (life.blocker ? '<h2>Blocker</h2><div class="hint" style="color:var(--bad)">' + esc(life.blocker) + '</div>' : '') +
       '<h2>Tasks</h2>' +
-      ((data.tasks || []).map(function (t) { return '<div class="task"><div class="id">' + t.id + ' <span class="pill ' + t.state + '">' + t.state + '</span></div><div class="out">' + (t.outcome || '') + '</div></div>'; }).join('') || '<div class="hint">No tasks yet.</div>') +
+      ((data.tasks || []).map(function (t) { return '<div class="task"><div class="id">' + esc(t.id) + ' <span class="pill ' + esc(t.state) + '">' + esc(t.state) + '</span></div><div class="out">' + esc(t.outcome) + '</div></div>'; }).join('') || '<div class="hint">No tasks yet.</div>') +
       '<h2>Ledger</h2>' +
-      Object.keys(data.counts || {}).map(function (k) { return '<div class="row"><span>' + k + '</span><b>' + data.counts[k] + '</b></div>'; }).join('');
+      Object.keys(data.counts || {}).map(function (k) { return '<div class="row"><span>' + esc(k) + '</span><b>' + esc(data.counts[k]) + '</b></div>'; }).join('');
   });
 }
 
@@ -456,7 +467,7 @@ for (var band = 0; band < 3; band++) (function (b) {
 })(band);
 $('q').oninput = function (e) { filter = e.target.value.trim().toLowerCase(); schedule(); };
 $('refresh').onclick = function () { fetchMap(); };
-$('reset').onclick = function () { focusPath = ''; hovered = -1; buildLayout(); fit(); schedule(true); };
+$('reset').onclick = function () { focusPath = ''; hovered = -1; framed = true; buildLayout(); fit(); schedule(true); };
 addEventListener('resize', function () { resize(); fit(); schedule(); });
 
 resize();

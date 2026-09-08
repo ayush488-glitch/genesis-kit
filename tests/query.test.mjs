@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { boundary, callers, callees, defines, impact, loadGraph, path as shortestPath, resolveRef, search } from '../tools/query.mjs';
+import { boundary, callers, callees, defines, describe, impact, loadGraph, path as shortestPath, resolveRef, search } from '../tools/query.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const graphizer = join(root, 'tools', 'graphizer.mjs'), cli = join(root, 'tools', 'query.mjs');
@@ -79,4 +79,15 @@ test('scope answers for a directory, which the symbol tools cannot take', () => 
   assert.equal(answer.prefix, 'src');
   assert.equal(answer.files, 4);
   assert.equal(answer.dependsOn.length, 0, 'nothing outside src is imported');
+});
+
+test('a missing node yields an identifiable row rather than crashing the printer', () => {
+  const repo = repoFixture();
+  const graph = loadGraph(repo);
+  const row = describe(undefined, 'file:deleted.ts');
+  assert.equal(row.id, 'file:deleted.ts', 'keeps the id it was asked about');
+  assert.equal(row.kind, 'missing');
+  assert.doesNotThrow(() => String(row.name || row.id).padEnd(38), 'the text printer can render it');
+  // A row without identity would silently strip meaning from --json too.
+  assert.notEqual(describe(undefined, 'x').name, undefined);
 });

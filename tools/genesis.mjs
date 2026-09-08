@@ -712,6 +712,8 @@ function commandServe(parsed) {
   const args = [serve, repo];
   if (parsed.options.port) args.push('--port', String(parsed.options.port));
   if (parsed.options.open) args.push('--open');
+  // Documented as the escape hatch from reindex-on-every-save, so it has to actually reach serve.
+  if (parsed.options['no-watch']) args.push('--no-watch');
   // Runs in the foreground until interrupted: it is a viewer, not a daemon, and it holds no lock.
   const result = spawnSync(process.execPath, args, { stdio: 'inherit' });
   if (result.status !== 0 && result.status !== null) throw new Error('control panel exited unexpectedly');
@@ -1337,14 +1339,6 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
   }
   for (const grant of state.authorizations.filter(a => task && a.task === task.id && a.status === 'active')) add('authorizations', { id: grant.id, command: grant.command, usable: Boolean(validAuthorization(state, task, grant.id)), expires_at: grant.expires_at });
   for (const attempt of state.attempts.filter(a => a.task === task?.id).slice(-3).reverse()) add('attempts', { id: attempt.id, kind: attempt.kind, status: attempt.status, stop_reason: attempt.stop_reason });
-  const candidates = ['decisions', 'knowledge', 'assumptions'].flatMap(type => (state[type] || []).map((record, index) => ({ type, record, index, score: relevance(record) })))
-    .filter(({ record, score }) => typeof record === 'object' && record.status !== 'superseded' && score >= 0)
-    .map(entry => ({ ...entry, shared: overlap(entry.record) }))
-    .sort((a, b) => b.score - a.score || b.shared - a.shared || b.index - a.index || a.type.localeCompare(b.type));
-  for (const { type, record, score } of candidates) {
-    const entry = options.full ? { type, ...record } : { type, id: record.id, title: record.title, summary: excerpt(record.text), status: record.status, source: excerpt(record.source, 100), truncated: String(record.text || '').length > 280 };
-    add('records', { ...entry, included_because: ['project context', 'requirement tag', 'task scope'][score] });
-  }
   // Scope cards and a symptom map replace the raw edge dump that used to go here. Both are the
   // same index read through query.mjs, so the packet, the CLI and the MCP tools agree.
   if (task && existsSync(join(genesisDir(repo), 'index', 'graph.json'))) {
@@ -1366,6 +1360,14 @@ function contextPacket(repo, state, task, budget = 8000, options = {}) {
       // Resolved before the agent reads anything, so it starts at code rather than at a search.
       for (const site of symptoms(graph, taskText, { limit: 8 })) add('symptoms', { ...site, advisory: true });
     }
+  }
+  const candidates = ['decisions', 'knowledge', 'assumptions'].flatMap(type => (state[type] || []).map((record, index) => ({ type, record, index, score: relevance(record) })))
+    .filter(({ record, score }) => typeof record === 'object' && record.status !== 'superseded' && score >= 0)
+    .map(entry => ({ ...entry, shared: overlap(entry.record) }))
+    .sort((a, b) => b.score - a.score || b.shared - a.shared || b.index - a.index || a.type.localeCompare(b.type));
+  for (const { type, record, score } of candidates) {
+    const entry = options.full ? { type, ...record } : { type, id: record.id, title: record.title, summary: excerpt(record.text), status: record.status, source: excerpt(record.source, 100), truncated: String(record.text || '').length > 280 };
+    add('records', { ...entry, included_because: ['project context', 'requirement tag', 'task scope'][score] });
   }
   packet.fingerprint = digest(packet);
   packet.metrics = { bytes: 0, estimated_tokens: 0, token_estimate: 'UTF-8 bytes / 4; model-dependent', budget_bytes: budget };
@@ -1579,7 +1581,7 @@ Usage:
   genesis status|checkpoint|dashboard|cleanup <repo>
   genesis index <repo> [graphizer options]
   genesis serve <repo> [--port N] [--open]   live control panel, read-only
-  genesis query <repo> search|defines|callers|callees|impact|neighbours|path ...
+  genesis query <repo> search|defines|scope|callers|callees|impact|neighbours|path ...
   genesis mcp <repo>                        expose the index to an agent over MCP stdio
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]

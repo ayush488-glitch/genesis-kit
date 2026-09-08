@@ -32,9 +32,13 @@ export function loadGraph(repo) {
 }
 
 const symbolName = (id) => { const cut = id.lastIndexOf(':'); return cut === -1 ? id : id.slice(cut + 1); };
-export const describe = (node) => node && (node.type === 'symbol'
-  ? { id: node.id, kind: node.kind, name: node.name, path: node.path, line: node.line }
-  : { id: node.id, kind: node.type, name: node.label, path: node.path });
+// Never returns undefined: callers spread this into a row, and a row without an id or name
+// crashes the printer and silently strips identity from --json.
+export const describe = (node, id) => !node
+  ? { id: id ?? null, kind: 'missing', name: id ?? '(unknown)', path: null }
+  : node.type === 'symbol'
+    ? { id: node.id, kind: node.kind, name: node.name, path: node.path, line: node.line }
+    : { id: node.id, kind: node.type, name: node.label, path: node.path };
 
 // A reference can be an exact node id, a file path, a bare symbol name, or "path#name". Ambiguity
 // is reported rather than resolved silently, because picking one of several same-named symbols is
@@ -60,13 +64,13 @@ function edgesOf(graph, node, direction, kinds) {
 
 export function callers(graph, node, { limit = 50 } = {}) {
   return edgesOf(graph, node, 'in', ['calls']).slice(0, limit).map((edge) => ({
-    ...describe(graph.byId.get(edge.source)), tier: edge.tier, confidence: edge.confidence,
+    ...describe(graph.byId.get(edge.source), edge.source), tier: edge.tier, confidence: edge.confidence,
     ...(edge.candidates ? { candidates: edge.candidates } : {}),
   }));
 }
 export function callees(graph, node, { limit = 50 } = {}) {
   return edgesOf(graph, node, 'out', ['calls']).slice(0, limit).map((edge) => ({
-    ...describe(graph.byId.get(edge.target)), tier: edge.tier, confidence: edge.confidence,
+    ...describe(graph.byId.get(edge.target), edge.target), tier: edge.tier, confidence: edge.confidence,
     ...(edge.candidates ? { candidates: edge.candidates } : {}),
   }));
 }
@@ -93,7 +97,7 @@ export function impact(graph, node, { hops = 6, limit = 200 } = {}) {
   }
   seen.delete(node.id);
   return [...seen].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).slice(0, limit)
-    .map(([id, distance]) => ({ ...describe(graph.byId.get(id)), distance }));
+    .map(([id, distance]) => ({ ...describe(graph.byId.get(id), id), distance }));
 }
 
 // What crosses the boundary of a file or directory. Used by the control panel's detail view and
@@ -161,7 +165,7 @@ export function neighbours(graph, node, { hops = 1, limit = 100, kinds = null } 
   }
   seen.delete(node.id);
   return [...seen].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).slice(0, limit)
-    .map(([id, distance]) => ({ ...describe(graph.byId.get(id)), distance }));
+    .map(([id, distance]) => ({ ...describe(graph.byId.get(id), id), distance }));
 }
 
 // Shortest dependency path, following edge direction. Returns the edges too, so the answer can be

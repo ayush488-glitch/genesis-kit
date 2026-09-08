@@ -219,3 +219,28 @@ test('extracts Python calls and inheritance, kept separate from JavaScript', () 
   assert.equal(crossed.length, 0, 'a Python call never resolves into JavaScript');
   assert(graph.edges.some((e) => e.extractor === 'python-stdlib-ast-calls'));
 });
+
+test('a failing python3 costs symbols, not whole files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-nopy-'));
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(root, 'pkg'), { recursive: true });
+  writeFileSync(join(root, 'pkg', 'app.py'), 'import helper\ndef main():\n    return helper.go()\n');
+  writeFileSync(join(root, 'pkg', 'helper.py'), 'def go():\n    return 1\n');
+  writeFileSync(join(root, 'pkg', 'web.ts'), 'export const x = 1;\n');
+  // A python3 that always fails, the way a missing interpreter behaves.
+  writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
+
+  const result = spawnSync(process.execPath, [graphizer, root], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(result.status, 0);
+  const graph = JSON.parse(result.stdout);
+
+  const files = graph.nodes.filter((n) => n.type === 'file').map((n) => n.path).sort();
+  assert.deepEqual(files, ['pkg/app.py', 'pkg/helper.py', 'pkg/web.ts'], 'every walked file keeps a node');
+  assert.equal(graph.nodes.filter((n) => n.type === 'symbol' && n.path.endsWith('.py')).length, 0, 'but no Python symbols were invented');
+  assert(graph.warnings.some((w) => /Python AST unavailable/.test(w)), 'and the failure is reported');
+
+  // Dropping the nodes while keeping the edges would leave imports pointing at nothing.
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  assert.equal(graph.edges.filter((e) => !ids.has(e.source) || !ids.has(e.target)).length, 0, 'no edge points at a missing node');
+});

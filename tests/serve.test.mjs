@@ -153,3 +153,16 @@ test('reindexes on a source edit and reports it, without any command being run',
   const data = await (await fetch(base + '/api/map')).json();
   assert(data.files.some((f) => f.path === 'src/ui/added.ts'), 'the new file is in the index');
 });
+
+test('--no-watch is honoured, so a save does not reindex', async (t) => {
+  const repo = project();
+  const child = spawn(process.execPath, [serve, repo, '--port', '0', '--no-watch'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => child.kill());
+  const banner = await new Promise((resolve, reject) => {
+    const fail = setTimeout(() => reject(new Error('no banner')), 10000);
+    let seen = '';
+    // The mode line follows the URL on a second write, so wait for it rather than the first chunk.
+    child.stdout.on('data', (chunk) => { seen += chunk; if (seen.includes('Approvals and gates')) { clearTimeout(fail); resolve(seen); } });
+  });
+  assert.match(banner, /not watching sources/);
+});

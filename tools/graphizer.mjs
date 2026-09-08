@@ -274,7 +274,13 @@ for (const path of files) {
 }
 if (stalePython.length) {
   const parsed = spawnSync('python3', ['-c', pythonScript], { input: JSON.stringify(stalePython.map(item => item.path)), encoding: 'utf8' });
-  if (parsed.status !== 0) warnings.push(`Python AST unavailable: ${(parsed.stderr || 'python3 failed').trim()}`);
+  if (parsed.status !== 0) {
+    // A missing or broken python3 costs symbols, not files. Every walked file still gets a node,
+    // or the whole Python half of a repository silently disappears from the graph and from every
+    // query built on it. Not cached, so the next run retries the extraction.
+    warnings.push(`Python AST unavailable: ${(parsed.stderr || 'python3 failed').trim()}`);
+    for (const item of stalePython) entries.set(item.rel, { symbols: [], imports: [], bindings: [], calls: [], path: item.path, language: 'python', contentHash: hash(readFileSync(item.path, 'utf8')) });
+  }
   else {
     const results = new Map(JSON.parse(parsed.stdout).map(result => [result.path, result]));
     for (const item of stalePython) {
@@ -374,5 +380,5 @@ const esc = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;'
 const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(graph.project)} code graph</title><style>body{font:14px system-ui;margin:2rem;color:#172033;background:#f7f8fa}header{display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap}input{padding:.6rem;min-width:20rem}section{display:grid;grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));gap:1rem}.card{background:white;border:1px solid #d9deea;border-radius:10px;padding:1rem}.node{padding:.45rem;border-left:4px solid #748ffc;margin:.35rem 0;background:#f8f9ff}.package{border-color:#2f9e44}.unresolved{border-color:#e8590c}.symbol{border-color:#7950f2}small{color:#667085}code{word-break:break-all}</style><header><h1>${esc(graph.project)}</h1><small>${sortedNodes.length} nodes · ${sortedEdges.length} edges · ${sourceHash.slice(0,12)}</small><input id="q" type="search" placeholder="Filter paths, symbols, packages" aria-label="Filter graph"></header><section><div class="card"><h2>Nodes</h2>${sortedNodes.map(n => `<div class="node ${n.type}" data-search="${esc(`${n.id} ${n.label}`.toLowerCase())}"><strong>${esc(n.label)}</strong> <small>${n.type} · ${n.confidence}</small><br><code>${esc(n.id)}</code></div>`).join('')}</div><div class="card"><h2>Relationships</h2>${sortedEdges.map(e => `<div class="node" data-search="${esc(`${e.source} ${e.target} ${e.specifier ?? ''}`.toLowerCase())}"><code>${esc(e.source)}</code> → <code>${esc(e.target)}</code><br><small>${e.type}${e.specifier ? ` · ${esc(e.specifier)}` : ''}</small></div>`).join('')}</div></section><script>q.oninput=()=>document.querySelectorAll('[data-search]').forEach(e=>e.hidden=!e.dataset.search.includes(q.value.toLowerCase()))</script></html>\n`;
 function writeChanged(path, content) { if (existsSync(path) && readFileSync(path,'utf8') === content) return false; writeFileSync(path,content); return true; }
 const placeholder = existsSync(outPath) && readFileSync(outPath,'utf8').includes('{{');
-if (write || placeholder) { mkdirSync(outDir,{recursive:true}); writeFileSync(cachePath, JSON.stringify({ version: CACHE_VERSION, files: nextCache })); const changed = [writeChanged(outPath,json),writeChanged(join(outDir,'graph.dot'),dot),writeChanged(join(outDir,'graph.html'),html)].filter(Boolean).length; console.error(`${changed ? 'wrote' : 'unchanged'} ${sortedNodes.length} nodes, ${sortedEdges.length} edges (${extracted} extracted, ${reused} reused) -> ${posix(relative(root,outDir)) || '.'}`); }
+if (write || placeholder) { mkdirSync(outDir,{recursive:true}); writeChanged(cachePath, JSON.stringify({ version: CACHE_VERSION, files: nextCache })); const changed = [writeChanged(outPath,json),writeChanged(join(outDir,'graph.dot'),dot),writeChanged(join(outDir,'graph.html'),html)].filter(Boolean).length; console.error(`${changed ? 'wrote' : 'unchanged'} ${sortedNodes.length} nodes, ${sortedEdges.length} edges (${extracted} extracted, ${reused} reused) -> ${posix(relative(root,outDir)) || '.'}`); }
 else { process.stdout.write(json); console.error(`dry run: ${sortedNodes.length} nodes, ${sortedEdges.length} edges; pass --write to save`); }
