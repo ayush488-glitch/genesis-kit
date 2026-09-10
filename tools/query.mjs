@@ -3,6 +3,7 @@
 // context packet can reuse exactly the same answers the CLI gives.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const cache = new Map();
 // Adjacency, added once so every helper can assume it. Exported because the panel parses the
@@ -281,6 +282,6 @@ function main(argv) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try { main(process.argv.slice(2)); } catch (error) { console.error(error.message); process.exit(1); }
 }
