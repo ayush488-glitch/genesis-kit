@@ -22,7 +22,15 @@ if [[ -L "$BIN" && "$(readlink "$BIN")" != "$TARGET" ]]; then
   echo "Refusing to replace existing link: $BIN" >&2
   exit 1
 fi
-if [[ -e "$BIN" && ! -L "$BIN" ]] && ! grep -qF "$MARKER" "$BIN" 2>/dev/null; then
+# A shim this script wrote is ours to replace; anything else at that path is not. Match the whole
+# three-line shape, not just the marker, which an unrelated file could happen to contain anywhere.
+installed_shim() {
+  local first second third extra
+  [[ -f $1 ]] || return 1
+  { IFS= read -r first && IFS= read -r second && IFS= read -r third && ! IFS= read -r extra; } < "$1" || return 1
+  [[ $first == '#!/usr/bin/env bash' && $second == "$MARKER" && $third == 'exec node '* ]]
+}
+if [[ -e "$BIN" && ! -L "$BIN" ]] && ! installed_shim "$BIN"; then
   echo "Refusing to replace existing file: $BIN" >&2
   exit 1
 fi
@@ -32,10 +40,9 @@ ln -sfn "$TARGET" "$BIN" 2>/dev/null || true
 # copy dies on its first import; write a shim in that case rather than ship the broken copy.
 if [[ ! -L "$BIN" ]]; then
   rm -f "$BIN"
-  printf '#!/usr/bin/env bash
-%s
-exec node "%s" "$@"
-' "$MARKER" "$TARGET" > "$BIN"
+  # The target is interpolated into shell source, so quote it with %q. Left bare, a kit directory
+  # containing $, ` or a quote would break the launcher or be expanded as a command on every run.
+  printf "#!/usr/bin/env bash\n%s\nexec node %q \"\$@\"\n" "$MARKER" "$TARGET" > "$BIN"
   chmod +x "$BIN"
 fi
 
