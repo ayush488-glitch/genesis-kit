@@ -334,6 +334,52 @@ test('a repository without Rust files gains no Rust nodes', () => {
   assert(!graph.nodes.some((n) => rustOnly(n.id)), 'no rust-only node kinds appear');
 });
 
+test('crate:: paths resolve inside the workspace member that imports them', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-ws-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('Cargo.toml', '[workspace]\nmembers = ["crates/*"]\n');
+  write('crates/api/Cargo.toml', '[package]\nname = "api"\n');
+  write('crates/api/src/lib.rs', 'use crate::config::Settings;\n\npub struct App;\n');
+  write('crates/api/src/config.rs', 'pub struct Settings;\n');
+  write('crates/api/src/bin/run.rs', 'use crate::config::Settings;\n');
+  write('crates/util/Cargo.toml', '[package]\nname = "util"\n');
+  write('crates/util/src/lib.rs', 'pub fn helper() {}\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = (source) => graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::config::Settings' && e.source === source);
+  assert.equal(edge('file:crates/api/src/lib.rs').target, 'file:crates/api/src/config.rs', 'the member crate root, not the workspace root');
+  assert.equal(edge('file:crates/api/src/bin/run.rs').target, 'file:crates/api/src/config.rs', 'from a nested directory the nearest enclosing crate still wins');
+});
+
+test('consecutive super segments each climb one module level', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-sup-'));
+  mkdirSync(join(root, 'src', 'a', 'b'), { recursive: true });
+  writeFileSync(join(root, 'src', 'a', 'b', 'c.rs'), 'use super::super::shared::Thing;\n\npub struct C;\n');
+  writeFileSync(join(root, 'src', 'a', 'shared.rs'), 'pub struct Thing;\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = graph.edges.find((e) => e.type === 'imports' && e.specifier === 'super::super::shared::Thing' && e.source === 'file:src/a/b/c.rs');
+  assert.equal(edge.target, 'file:src/a/shared.rs', 'the second super keeps climbing instead of being read as a directory name');
+});
+
+test('a glob use path resolves to the module it globs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-glob-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'lib.rs'), 'use crate::util::*;\n\npub fn main() {}\n');
+  writeFileSync(join(root, 'src', 'util.rs'), 'pub fn helper() {}\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === 'crate::util');
+  assert.equal(edge.target, 'file:src/util.rs', 'the glob resolves as the module itself, not as an item of a doubled path');
+  assert.equal(edge.resolved, true);
+});
+
+test('a trait impl names the qualified type it is implemented for', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-impl-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'lib.rs'), 'mod shape;\n\npub struct Circle;\n\nimpl shape::Display for Circle {\n}\n');
+  writeFileSync(join(root, 'src', 'shape.rs'), 'pub trait Display {}\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  assert(graph.nodes.some((n) => n.type === 'symbol' && n.id === 'symbol:src/lib.rs#type:shape::Display for Circle'), 'the for-group keeps the whole qualified path, not just its first segment');
+});
+
 test('artifacts are published atomically and leave no staging files', () => {
   const root = fixture();
   execFileSync(process.execPath, [graphizer, root, '--write']);

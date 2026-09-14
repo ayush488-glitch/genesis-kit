@@ -127,14 +127,27 @@ function packageName(specifier) { const parts = specifier.split('/'); return spe
 // undefined means "looked like local source but was not found"; null means "external package".
 function resolveJsImport(from, specifier) { if (specifier.startsWith('.') || specifier.startsWith('/')) return tryCandidates(resolve(dirname(from), specifier)); return resolveAlias(from, specifier) ?? resolveWorkspace(specifier) ?? null; }
 function resolvePythonImport(from, specifier) { const match = specifier.match(/^(\.+)(.*)$/); let base = match ? dirname(from) : root, module = match ? match[2] : specifier; if (match) for (let i = 1; i < match[1].length; i++) base = dirname(base); const path = join(base, ...module.split('.').filter(Boolean)); for (const candidate of [`${path}.py`, join(path, '__init__.py')]) if (known.has(candidate)) return candidate; return match ? undefined : null; }
-// A crate's modules hang off its crate root, which for a Cargo project means the `src` directory
-// when the repository has one. `self::` and `super::` follow module paths, not raw directories:
-// a file module `net/pool.rs` keeps its children in `net/pool/` and its parent's items in
-// `net/`, while `mod.rs` and the crate roots own their own directory.
+// A crate's modules hang off its crate root. In a Cargo workspace that root is per crate, not
+// per repository: the nearest enclosing directory with a Cargo.toml, whose `src` directory (when
+// it has one) holds the modules. `self::` and `super::` follow module paths, not raw
+// directories: a file module `net/pool.rs` keeps its children in `net/pool/` and its parent's
+// items in `net/`, while `mod.rs` and the crate roots own their own directory.
 const rustCrateBase = existsSync(join(root, 'src')) ? join(root, 'src') : root;
 const tryRustCandidates = base => { for (const candidate of [`${base}.rs`, join(base, 'mod.rs')]) if (known.has(candidate)) return candidate; };
 const rustSelfBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dir : join(dir, stem); };
 const rustSuperBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dirname(dir) : dir; };
+const rustCrateBases = new Map();
+function rustCrateBaseOf(from) {
+  const dir = dirname(from);
+  if (rustCrateBases.has(dir)) return rustCrateBases.get(dir);
+  let base = null;
+  for (let probe = dir; probe === root || probe.startsWith(root + sep); probe = dirname(probe)) {
+    if (existsSync(join(probe, 'Cargo.toml'))) { base = existsSync(join(probe, 'src')) ? join(probe, 'src') : probe; break; }
+    if (probe === root) break;
+  }
+  rustCrateBases.set(dir, base ?? rustCrateBase);
+  return base ?? rustCrateBase;
+}
 // A use path's last segment may name an item inside a module rather than a module itself:
 // `use crate::config::Settings` resolves to config.rs, not config/Settings.rs. Try the whole
 // path as a module first, then fall back to the module that contains the item. Unqualified
@@ -142,9 +155,18 @@ const rustSuperBase = from => { const dir = dirname(from), stem = basename(from,
 function resolveRustImport(from, specifier) {
   const parts = specifier.split('::').filter(Boolean);
   if (!parts.length) return;
-  const head = parts[0], local = head === 'crate' ? rustCrateBase : head === 'self' ? rustSelfBase(from) : head === 'super' ? rustSuperBase(from) : null;
-  if (!local) return null;
-  return tryRustCandidates(join(local, ...parts.slice(1))) ?? tryRustCandidates(join(local, ...parts.slice(1, -1)));
+  let base = null, rest = parts;
+  if (parts[0] === 'crate') { base = rustCrateBaseOf(from); rest = parts.slice(1); }
+  else if (parts[0] === 'self') { base = rustSelfBase(from); rest = parts.slice(1); }
+  else if (parts[0] === 'super') {
+    // Every leading `super` climbs one module level; rustSuperBase already steps from a file
+    // module to its parent's directory, so the remaining supers walk up from there.
+    let supers = 0; while (rest[0] === 'super') { supers += 1; rest = rest.slice(1); }
+    base = from;
+    for (let step = 0; step < supers; step += 1) base = step === 0 ? rustSuperBase(from) : dirname(base);
+  }
+  else return null;
+  return tryRustCandidates(join(base, ...rest)) ?? tryRustCandidates(join(base, ...rest.slice(0, -1)));
 }
 function addDependency(from, specifier, line, language, standard = false) {
   const target = language === 'javascript' ? resolveJsImport(from, specifier) : language === 'rust' ? resolveRustImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
@@ -255,7 +277,7 @@ const RUST_PATTERNS = [
   ['enum', new RegExp(`^${RUST_VIS}enum\\s+${NAME}`)],
   ['interface', new RegExp(`^${RUST_VIS}trait\\s+${NAME}`)],
 ];
-const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*))?/;
+const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*))?/;;
 const rustMod = new RegExp(`^${RUST_VIS}mod\\s+${NAME}\\s*;`);
 const rustUseLine = new RegExp(`^${RUST_VIS}use\\s+([^;]+);`);
 // Expand one `use` clause into import edges plus import bindings, the way rustc reads it:
@@ -266,7 +288,7 @@ function rustUse(clause, line, imports, bindings) {
   if (glob) clause = clause.slice(0, -3);
   const group = clause.match(/^(.*::)?\{(.*)\}$/);
   const prefix = glob && !group ? clause : group ? (group[1] || '').replace(/::$/, '') : null;
-  for (const raw of (group ? group[2] : clause).split(',')) {
+  for (const raw of (group ? group[2] : glob ? '*' : clause).split(',')) {
     const item = raw.trim();
     if (!item || item.includes('{') || item.includes('}')) continue;
     let path = prefix, local, imported;
