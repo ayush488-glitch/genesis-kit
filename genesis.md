@@ -27,7 +27,7 @@ If the current workflow phase is discovery or specification, complete and check 
 
 Create one bounded task with an outcome, risk, scope, next action, and executable gates. Search for existing code before adding code, and query the index before searching: `genesis query <repo> search NAME` finds a definition, `impact PATH` gives the blast radius before you touch shared code. Prefer deletion and reuse over new abstractions or dependencies.
 
-Index answers are advisory. Confirm them in source, treat `ambiguous` as a candidate set rather than an answer, and remember that only JavaScript, TypeScript and Python are extracted.
+Index answers are advisory. Confirm them in source, treat `ambiguous` as a candidate set rather than an answer, and remember that only JavaScript, TypeScript, Python and Rust are extracted.
 
 Record consequential decisions, assumptions, confirmed invariants, and durable knowledge with `genesis record`. Include provenance in `--source`; do not leave reasoning only in chat.
 

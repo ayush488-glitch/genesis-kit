@@ -13,7 +13,7 @@ const root = resolve(rootArg), write = argv.includes('--write'), outIndex = argv
 if (outIndex !== -1 && !argv[outIndex + 1]) { console.error('--out needs a path'); process.exit(1); }
 const outPath = resolve(outIndex < 0 ? join(root, '.genesis', 'index', 'graph.json') : argv[outIndex + 1]), outDir = dirname(outPath);
 const IGNORE = new Set(['.cache', '.genesis', '.git', '.next', '.turbo', '.venv', '__pycache__', 'build', 'coverage', 'dist', 'node_modules', 'out', 'target', 'venv']);
-const CODE = new Set(['.cjs', '.js', '.jsx', '.mjs', '.py', '.ts', '.tsx']);
+const CODE = new Set(['.cjs', '.js', '.jsx', '.mjs', '.py', '.rs', '.ts', '.tsx']);
 const CONFIGS = new Set(['jsconfig.json', 'tsconfig.json']);
 const JS_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'];
 const NODE_BUILTINS = new Set(builtinModules.map(name => name.replace(/^node:/, '')));
@@ -127,13 +127,32 @@ function packageName(specifier) { const parts = specifier.split('/'); return spe
 // undefined means "looked like local source but was not found"; null means "external package".
 function resolveJsImport(from, specifier) { if (specifier.startsWith('.') || specifier.startsWith('/')) return tryCandidates(resolve(dirname(from), specifier)); return resolveAlias(from, specifier) ?? resolveWorkspace(specifier) ?? null; }
 function resolvePythonImport(from, specifier) { const match = specifier.match(/^(\.+)(.*)$/); let base = match ? dirname(from) : root, module = match ? match[2] : specifier; if (match) for (let i = 1; i < match[1].length; i++) base = dirname(base); const path = join(base, ...module.split('.').filter(Boolean)); for (const candidate of [`${path}.py`, join(path, '__init__.py')]) if (known.has(candidate)) return candidate; return match ? undefined : null; }
+// A crate's modules hang off its crate root, which for a Cargo project means the `src` directory
+// when the repository has one. `self::` and `super::` follow module paths, not raw directories:
+// a file module `net/pool.rs` keeps its children in `net/pool/` and its parent's items in
+// `net/`, while `mod.rs` and the crate roots own their own directory.
+const rustCrateBase = existsSync(join(root, 'src')) ? join(root, 'src') : root;
+const tryRustCandidates = base => { for (const candidate of [`${base}.rs`, join(base, 'mod.rs')]) if (known.has(candidate)) return candidate; };
+const rustSelfBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dir : join(dir, stem); };
+const rustSuperBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dirname(dir) : dir; };
+// A use path's last segment may name an item inside a module rather than a module itself:
+// `use crate::config::Settings` resolves to config.rs, not config/Settings.rs. Try the whole
+// path as a module first, then fall back to the module that contains the item. Unqualified
+// paths name an external crate in the 2018 edition and later, so they are never probed locally.
+function resolveRustImport(from, specifier) {
+  const parts = specifier.split('::').filter(Boolean);
+  if (!parts.length) return;
+  const head = parts[0], local = head === 'crate' ? rustCrateBase : head === 'self' ? rustSelfBase(from) : head === 'super' ? rustSuperBase(from) : null;
+  if (!local) return null;
+  return tryRustCandidates(join(local, ...parts.slice(1))) ?? tryRustCandidates(join(local, ...parts.slice(1, -1)));
+}
 function addDependency(from, specifier, line, language, standard = false) {
-  const target = language === 'javascript' ? resolveJsImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
+  const target = language === 'javascript' ? resolveJsImport(from, specifier) : language === 'rust' ? resolveRustImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
   const confidence = .85;
   if (target) return addEdge({ type: 'imports', source, target: fileId(target), specifier, line, resolved: true, confidence, extractor: extractor });
-  const name = packageName(specifier.replace(/^node:|^\.+/, ''));
+  const name = language === 'rust' ? specifier.split('::')[0] : packageName(specifier.replace(/^node:|^\.+/, ''));
   if (standard || (language === 'javascript' && NODE_BUILTINS.has(name))) { const id = `runtime:${language}:${name}`; addNode({ id, type: 'runtime', label: name, language, confidence, extractor: 'standard-library', contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: true, confidence, extractor: extractor }); }
-  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, extractor: 'import', contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .5, extractor: extractor }); }
+  if (target === null) { const ecosystem = language === 'python' ? 'pypi' : language === 'rust' ? 'crates' : 'npm', id = `package:${ecosystem}:${name}`; addNode({ id, type: 'package', label: name, ecosystem, confidence, extractor: 'import', contentHash: hash(id) }); return addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .5, extractor: extractor }); }
   const id = `unresolved:${rel}:${specifier}`; addNode({ id, type: 'unresolved', label: specifier, confidence: .4, extractor: 'import', contentHash: hash(id) }); addEdge({ type: 'imports', source, target: id, specifier, line, resolved: false, confidence: .4, extractor: extractor });
 }
 
@@ -224,6 +243,65 @@ function extractJs(source) {
   return { symbols, imports, bindings, calls };
 }
 
+// --- Rust: the same anchored line scan as JavaScript, no parser ---
+// Items must begin their own line at column 0, so methods inside `impl` blocks and items inside
+// inline `mod` blocks are never claimed; a file module's items live in their own file and are
+// scanned on their own. `impl Trait for Type` is matched by one regex with an optional `for`
+// group, because a separate inherent-impl pattern would also match the trait form.
+const RUST_VIS = '(?:pub(?:\\([^)]*\\))?\\s+)?';
+const RUST_PATTERNS = [
+  ['function', new RegExp(`^${RUST_VIS}(?:async\\s+)?fn\\s+${NAME}`)],
+  ['class', new RegExp(`^${RUST_VIS}struct\\s+${NAME}`)],
+  ['enum', new RegExp(`^${RUST_VIS}enum\\s+${NAME}`)],
+  ['interface', new RegExp(`^${RUST_VIS}trait\\s+${NAME}`)],
+];
+const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*))?/;
+const rustMod = new RegExp(`^${RUST_VIS}mod\\s+${NAME}\\s*;`);
+const rustUseLine = new RegExp(`^${RUST_VIS}use\\s+([^;]+);`);
+// Expand one `use` clause into import edges plus import bindings, the way rustc reads it:
+// `use a::b::{self, C as D, *}` binds the module b, D from a::b::C, and everything in a::b::*.
+// Grouped and glob forms are handled line by line, so a clause wrapped across lines is skipped.
+function rustUse(clause, line, imports, bindings) {
+  const glob = clause.endsWith('::*');
+  if (glob) clause = clause.slice(0, -3);
+  const group = clause.match(/^(.*::)?\{(.*)\}$/);
+  const prefix = glob && !group ? clause : group ? (group[1] || '').replace(/::$/, '') : null;
+  for (const raw of (group ? group[2] : clause).split(',')) {
+    const item = raw.trim();
+    if (!item || item.includes('{') || item.includes('}')) continue;
+    let path = prefix, local, imported;
+    if (item === '*') { local = '*'; imported = '*'; }
+    else if (item === 'self') { local = prefix.split('::').pop(); imported = 'self'; }
+    else {
+      const alias = item.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
+      const name = alias ? alias[1].trim() : item;
+      path = prefix ? `${prefix}::${name}` : name;
+      local = alias ? alias[2] : name.split('::').pop();
+      imported = name.split('::').pop();
+    }
+    if (!path) continue;
+    imports.push({ specifier: path, line, standard: /^(?:std|core|alloc)::/.test(path) });
+    bindings.push({ local, imported, specifier: path });
+  }
+}
+function extractRust(source) {
+  const symbols = [], imports = [], bindings = [], lines = source.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line) continue;
+    // `mod foo;` names a file module and becomes an import edge; an inline `mod foo { ... }`
+    // owns its items, needs no edge and matches nothing (its body is indented).
+    const mod = rustMod.exec(line);
+    if (mod) { imports.push({ specifier: `self::${mod[1]}`, line: index + 1 }); continue; }
+    const use = rustUseLine.exec(line);
+    if (use) { rustUse(use[1], index + 1, imports, bindings); continue; }
+    const impl = rustImpl.exec(line);
+    if (impl) { symbols.push({ kind: 'type', name: impl[2] ? `${impl[1]} for ${impl[2]}` : impl[1], line: index + 1 }); continue; }
+    for (const [kind, pattern] of RUST_PATTERNS) { const match = pattern.exec(line); if (match) { symbols.push({ kind, name: match[1], line: index + 1 }); break; } }
+  }
+  return { symbols, imports, bindings, calls: [] };
+}
+
 const pythonScript = `import ast,json,sys
 r=[]
 class Scan(ast.NodeVisitor):
@@ -260,16 +338,16 @@ print(json.dumps(r))`;
 const entries = new Map();      // rel -> { path, language, contentHash, symbols, imports, bindings, calls, error }
 const stalePython = [];
 for (const path of files) {
-  const rel = posix(relative(root, path)), python = extname(path) === '.py';
+  const rel = posix(relative(root, path)), ext = extname(path), python = ext === '.py', rust = ext === '.rs';
   let stat; try { stat = statSync(path); } catch { continue; }
   const stamp = `${stat.size}:${Math.round(stat.mtimeMs)}`;
   const hit = cache[rel];
-  if (hit && hit.stamp === stamp) { entries.set(rel, { ...hit.data, path, language: python ? 'python' : 'javascript', contentHash: hit.contentHash }); nextCache[rel] = hit; reused += 1; continue; }
+  if (hit && hit.stamp === stamp) { entries.set(rel, { ...hit.data, path, language: python ? 'python' : rust ? 'rust' : 'javascript', contentHash: hit.contentHash }); nextCache[rel] = hit; reused += 1; continue; }
   extracted += 1;
   if (python) { stalePython.push({ path, rel, stamp }); continue; }
-  const source = readFileSync(path, 'utf8');
-  const data = extractJs(source), contentHash = hash(source);
-  entries.set(rel, { ...data, path, language: 'javascript', contentHash });
+  const source = readFileSync(path, 'utf8'), contentHash = hash(source);
+  const data = rust ? extractRust(source) : extractJs(source);
+  entries.set(rel, { ...data, path, language: rust ? 'rust' : 'javascript', contentHash });
   nextCache[rel] = { stamp, contentHash, data };
 }
 if (stalePython.length) {
@@ -300,8 +378,8 @@ const fileSymbols = new Map(), fileImports = new Map();
 for (const [rel, entry] of entries) {
   addNode({ id: `file:${rel}`, type: 'file', label: rel, path: rel, language: entry.language, confidence: 1, extractor: 'filesystem', contentHash: entry.contentHash });
   if (entry.error) { warnings.push(`${rel}: ${entry.error}`); continue; }
-  const python = entry.language === 'python';
-  const extractor = python ? 'python-stdlib-ast' : 'conservative-js-symbols';
+  const python = entry.language === 'python', rust = entry.language === 'rust';
+  const extractor = python ? 'python-stdlib-ast' : rust ? 'conservative-rust-symbols' : 'conservative-js-symbols';
   const named = entry.symbols.map(symbol => ({ ...symbol, name: python ? symbol.qualifiedName : symbol.name }));
   fileSymbols.set(rel, named);
   for (const symbol of named) {
@@ -312,7 +390,7 @@ for (const [rel, entry] of entries) {
   for (const item of entry.imports) addDependency(entry.path, item.specifier, item.line, entry.language, item.standard);
   const imports = new Map();
   for (const binding of entry.bindings) {
-    const target = python ? resolvePythonImport(entry.path, binding.specifier) : resolveJsImport(entry.path, binding.specifier);
+    const target = python ? resolvePythonImport(entry.path, binding.specifier) : rust ? resolveRustImport(entry.path, binding.specifier) : resolveJsImport(entry.path, binding.specifier);
     if (target) imports.set(binding.local, { file: posix(relative(root, target)), imported: binding.imported });
   }
   fileImports.set(rel, imports);
@@ -323,7 +401,7 @@ for (const [rel, entry] of entries) {
 // collapsed into a confident guess; a call that resolves to nothing is counted, never invented.
 // Indexed per language: a JavaScript call must never resolve to a Python definition that happens
 // to share a name.
-const byLanguage = { javascript: new Map(), python: new Map() };
+const byLanguage = { javascript: new Map(), python: new Map(), rust: new Map() };
 for (const [rel, symbols] of fileSymbols) {
   const index = byLanguage[entries.get(rel).language];
   for (const symbol of symbols) {

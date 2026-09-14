@@ -48,12 +48,13 @@ The indexer is static, dependency-free and deliberately conservative about what 
 | :--- | :--- | :--- | :--- |
 | JavaScript, TypeScript, JSX, TSX | Yes, including `tsconfig` path aliases and pnpm/npm/yarn workspace packages | Yes, top-level declarations | Yes |
 | Python | Yes | Yes, via the standard-library AST | Yes |
+| Rust | Yes, `use` and `mod` paths (`crate::`, `self::`, `super::`), external crates and `std` | Yes, top-level `fn`, `struct`, `enum`, `trait` and `impl` | No |
 | Everything else | No | No | No |
 
-A Go, Rust, Java or Ruby project will index as an almost empty graph. That is a limit of the
+A Go, Java or Ruby project will index as an almost empty graph. That is a limit of the
 current extractors, not a configuration problem.
 
-Two further limits worth stating. JavaScript and TypeScript symbols are found by an anchored
+Two further limits worth stating. JavaScript, TypeScript and Rust symbols are found by an anchored
 line scan, so a declaration must begin its own line; `import x from 'y'; export function z() {}`
 on one line yields no `z`. Formatted source is unaffected, generated or minified files are not.
 And a call whose target cannot be resolved to exactly one definition is either kept as an

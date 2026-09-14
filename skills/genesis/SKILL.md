@@ -30,7 +30,7 @@ Before editing, report `state → evidence → blocker → next action`. Inspect
 
 Query the index before reading widely or grepping. `genesis query <repo> search NAME` finds where a name is defined; `scope PATH` gives a file or directory's dependencies in both directions; `callers`/`callees` give call edges; `impact PATH` gives everything that transitively imports a file, which is the blast radius to check before editing shared code; `path FROM TO` shows how two files connect. Search the repository before adding anything, and query it before searching.
 
-Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript and Python are extracted, so absence from the index is not evidence of absence in the repository.
+Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript, Python and Rust are extracted, so absence from the index is not evidence of absence in the repository.
 
 Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specification, and planning, do not write product implementation code.
 

@@ -255,6 +255,85 @@ test('an aliased parent class resolves to the name the target file declares', ()
   assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/child.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
 });
 
+function rustFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('src/lib.rs', [
+    'mod config;',
+    'mod net;',
+    '',
+    'use std::collections::HashMap;',
+    'use serde::{Serialize, Deserialize};',
+    'use crate::config::Settings;',
+    'pub use crate::config::Settings as Config;',
+    '',
+    'pub struct App {',
+    '    pub name: String,',
+    '}',
+    'pub(crate) struct Internal;',
+    'pub enum Mode { On, Off }',
+    'pub trait Runner {',
+    '    fn run(&self);',
+    '}',
+    'impl App {',
+    '    pub fn start() {}',
+    '}',
+    'impl Runner for App {',
+    '    fn run(&self) {}',
+    '}',
+    '',
+    'pub async fn launch() {}',
+    'pub fn probe() {}',
+    'fn hidden() {}',
+  ].join('\n') + '\n');
+  write('src/config.rs', 'pub struct Settings {\n    pub debug: bool,\n}\n\npub fn load() -> Settings {\n    Settings { debug: true }\n}\n');
+  write('src/net/mod.rs', 'pub mod tcp;\npub mod pool;\n\nuse crate::config::Settings;\n');
+  write('src/net/tcp.rs', 'pub struct Socket;\n');
+  write('src/net/pool.rs', 'use super::tcp::Socket;\n\npub struct Pool;\n');
+  return root;
+}
+
+test('indexes a Rust crate: modules, use paths and top-level items', () => {
+  const root = rustFixture();
+  const first = execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }), graph = JSON.parse(first);
+  const edge = (source, specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === source && e.specifier === specifier);
+
+  // Every .rs file in the tree is traversed and carries the rust language.
+  for (const id of ['file:src/lib.rs', 'file:src/config.rs', 'file:src/net/mod.rs', 'file:src/net/tcp.rs', 'file:src/net/pool.rs']) {
+    assert.equal(graph.nodes.find((n) => n.id === id).language, 'rust', id);
+  }
+
+  assert.equal(edge('file:src/lib.rs', 'self::config').target, 'file:src/config.rs', 'a `mod` declaration resolves to its file');
+  assert.equal(edge('file:src/lib.rs', 'self::net').target, 'file:src/net/mod.rs', 'a directory module resolves to its mod.rs');
+  assert.equal(edge('file:src/lib.rs', 'crate::config::Settings').target, 'file:src/config.rs', 'a crate:: path resolves against the crate root, item fallback to the parent module');
+  assert.equal(edge('file:src/net/pool.rs', 'super::tcp::Socket').target, 'file:src/net/tcp.rs', 'a super:: path resolves against the parent module of a file module');
+  assert.equal(edge('file:src/lib.rs', 'std::collections::HashMap').target, 'runtime:rust:std', 'the standard library is a runtime node');
+  const external = edge('file:src/lib.rs', 'serde::Serialize');
+  assert.equal(external.target, 'package:crates:serde', 'an external crate stays a package');
+  assert.equal(external.resolved, false);
+
+  const symbol = (path, kind, name) => graph.nodes.find((n) => n.type === 'symbol' && n.id === `symbol:${path}#${kind}:${name}`);
+  assert(symbol('src/lib.rs', 'class', 'App') && symbol('src/lib.rs', 'class', 'Internal'), 'structs are classes, including pub(crate)');
+  assert(symbol('src/lib.rs', 'enum', 'Mode'), 'enums are claimed');
+  assert(symbol('src/lib.rs', 'interface', 'Runner'), 'traits are interfaces');
+  assert(symbol('src/lib.rs', 'function', 'launch') && symbol('src/lib.rs', 'function', 'hidden'), 'async and private fns are claimed');
+  assert(symbol('src/lib.rs', 'type', 'Runner for App') && symbol('src/lib.rs', 'type', 'App'), 'impl blocks are type bindings');
+  assert.equal(symbol('src/lib.rs', 'function', 'launch').extractor, 'conservative-rust-symbols');
+  assert(!graph.nodes.some((n) => n.type === 'symbol' && (n.name === 'run' || n.name === 'start')), 'methods inside impl and trait bodies are never claimed');
+
+  // The qualified graph stays deterministic and on the current schema.
+  assert.equal(graph.schemaVersion, 2);
+  assert.equal(first, execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+});
+
+test('a repository without Rust files gains no Rust nodes', () => {
+  const root = fixture();
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  assert(graph.nodes.every((n) => n.language !== 'rust'), 'no node is reported as rust');
+  const rustOnly = (id) => id.startsWith('package:crates:') || id.startsWith('runtime:rust:');
+  assert(!graph.nodes.some((n) => rustOnly(n.id)), 'no rust-only node kinds appear');
+});
+
 test('artifacts are published atomically and leave no staging files', () => {
   const root = fixture();
   execFileSync(process.execPath, [graphizer, root, '--write']);

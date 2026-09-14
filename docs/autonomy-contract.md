@@ -35,7 +35,7 @@ there.
 `genesis query` and `genesis mcp` read the generated index and nothing else. Their answers are
 static analysis and are marked advisory throughout: a call that cannot be resolved to one
 definition is returned as a candidate set or counted, never guessed, and absence from the index is
-not evidence of absence in the repository, since only JavaScript, TypeScript and Python are
+not evidence of absence in the repository, since only JavaScript, TypeScript, Python and Rust are
 extracted and symbols are found by an anchored line scan.
 
 ## Verification
