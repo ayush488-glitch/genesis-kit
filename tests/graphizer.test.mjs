@@ -343,11 +343,14 @@ test('crate:: paths resolve inside the workspace member that imports them', () =
   write('crates/api/src/config.rs', 'pub struct Settings;\n');
   write('crates/api/src/bin/run.rs', 'use crate::config::Settings;\n');
   write('crates/util/Cargo.toml', '[package]\nname = "util"\n');
-  write('crates/util/src/lib.rs', 'pub fn helper() {}\n');
+  write('crates/util/src/lib.rs', 'use crate::math::Vec2;\n\npub fn helper() {}\n');
+  write('crates/util/src/math.rs', 'pub struct Vec2;\n');
   const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
   const edge = (source) => graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::config::Settings' && e.source === source);
   assert.equal(edge('file:crates/api/src/lib.rs').target, 'file:crates/api/src/config.rs', 'the member crate root, not the workspace root');
   assert.equal(edge('file:crates/api/src/bin/run.rs').target, 'file:crates/api/src/config.rs', 'from a nested directory the nearest enclosing crate still wins');
+  const utilEdge = graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::math::Vec2' && e.source === 'file:crates/util/src/lib.rs');
+  assert.equal(utilEdge.target, 'file:crates/util/src/math.rs', 'a crate:: path in the second member resolves inside that member, not another crate');
 });
 
 test('consecutive super segments each climb one module level', () => {
@@ -374,10 +377,10 @@ test('a glob use path resolves to the module it globs', () => {
 test('a trait impl names the qualified type it is implemented for', () => {
   const root = mkdtempSync(join(tmpdir(), 'genesis-rust-impl-'));
   mkdirSync(join(root, 'src'), { recursive: true });
-  writeFileSync(join(root, 'src', 'lib.rs'), 'mod shape;\n\npub struct Circle;\n\nimpl shape::Display for Circle {\n}\n');
-  writeFileSync(join(root, 'src', 'shape.rs'), 'pub trait Display {}\n');
+  writeFileSync(join(root, 'src', 'lib.rs'), 'mod shape;\n\npub trait Display {}\n\nimpl Display for shape::Circle {\n}\n');
+  writeFileSync(join(root, 'src', 'shape.rs'), 'pub struct Circle;\n');
   const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
-  assert(graph.nodes.some((n) => n.type === 'symbol' && n.id === 'symbol:src/lib.rs#type:shape::Display for Circle'), 'the for-group keeps the whole qualified path, not just its first segment');
+  assert(graph.nodes.some((n) => n.type === 'symbol' && n.id === 'symbol:src/lib.rs#type:Display for shape::Circle'), 'the for-group keeps the whole qualified target, not just its first segment');
 });
 
 test('artifacts are published atomically and leave no staging files', () => {

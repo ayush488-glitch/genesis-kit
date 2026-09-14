@@ -277,7 +277,7 @@ const RUST_PATTERNS = [
   ['enum', new RegExp(`^${RUST_VIS}enum\\s+${NAME}`)],
   ['interface', new RegExp(`^${RUST_VIS}trait\\s+${NAME}`)],
 ];
-const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*))?/;;
+const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*))?/;
 const rustMod = new RegExp(`^${RUST_VIS}mod\\s+${NAME}\\s*;`);
 const rustUseLine = new RegExp(`^${RUST_VIS}use\\s+([^;]+);`);
 // Expand one `use` clause into import edges plus import bindings, the way rustc reads it:
