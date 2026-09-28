@@ -48,7 +48,7 @@ The indexer is static, dependency-free and deliberately conservative about what 
 | :--- | :--- | :--- | :--- |
 | JavaScript, TypeScript, JSX, TSX | Yes, including `tsconfig` path aliases and pnpm/npm/yarn workspace packages | Yes, top-level declarations | Yes |
 | Python | Yes | Yes, via the standard-library AST | Yes |
-| Rust | Yes, `use` and `mod` paths (`crate::`, `self::`, `super::`), external crates and `std` | Yes, top-level `fn`, `struct`, `enum`, `trait` and `impl` | No |
+| Rust | Yes, `use` and `mod` paths (`crate::`, `self::`, `super::`, nested groups and globs), external crates, and the `std`, `core` and `alloc` runtime crates | Yes, top-level `fn`, `struct`, `enum`, `trait` and `impl`, including `unsafe` forms | No |
 | Everything else | No | No | No |
 
 A Go, Java or Ruby project will index as an almost empty graph. That is a limit of the

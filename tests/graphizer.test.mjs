@@ -383,6 +383,71 @@ test('a trait impl names the qualified type it is implemented for', () => {
   assert(graph.nodes.some((n) => n.type === 'symbol' && n.id === 'symbol:src/lib.rs#type:Display for shape::Circle'), 'the for-group keeps the whole qualified target, not just its first segment');
 });
 
+function rustGraph(prefix, files) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); }
+  return JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+}
+
+test('nested use groups expand every leaf against its full path', () => {
+  const graph = rustGraph('genesis-rust-nest-', {
+    'src/lib.rs': 'mod net;\nuse crate::net::{tcp::{Socket, Listener as L}, pool::*, self};\n',
+    'src/net/mod.rs': 'pub mod tcp;\npub mod pool;\n',
+    'src/net/tcp.rs': 'pub struct Socket;\npub struct Listener;\n',
+    'src/net/pool.rs': 'pub struct Pool;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate::net::tcp::Socket'), 'file:src/net/tcp.rs', 'a leaf of an inner group keeps both group prefixes');
+  assert.equal(target('crate::net::tcp::Listener'), 'file:src/net/tcp.rs', 'an aliased leaf inside an inner group resolves by its real name');
+  assert.equal(target('crate::net::pool'), 'file:src/net/pool.rs', 'a glob inside a group resolves to the globbed module');
+  assert.equal(target('crate::net'), 'file:src/net/mod.rs', 'self inside a group names the group module');
+  assert(!graph.nodes.some((n) => n.type === 'unresolved' && /[{}]/.test(n.label)), 'no brace ever leaks into a specifier');
+});
+
+test('root glob imports resolve to the crate root or the runtime', () => {
+  const graph = rustGraph('genesis-rust-root-', {
+    'src/lib.rs': 'pub mod util;\npub struct Root;\n',
+    'src/util.rs': 'use crate::*;\nuse super::*;\nuse self::*;\nuse std::*;\nuse core::*;\nuse alloc::*;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/util.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate'), 'file:src/lib.rs', 'crate::* globs the crate root');
+  assert.equal(target('super'), 'file:src/lib.rs', 'super::* from a top-level file module globs the crate root');
+  assert.equal(target('self'), 'file:src/util.rs', 'self::* globs the file itself');
+  for (const name of ['std', 'core', 'alloc']) assert.equal(target(name), `runtime:rust:${name}`, `${name}::* is a runtime import`);
+  assert(!graph.nodes.some((n) => /^package:crates:(?:std|core|alloc)$/.test(n.id)), 'the standard crates are never external packages');
+});
+
+test('unsafe and qualified item forms are claimed', () => {
+  const graph = rustGraph('genesis-rust-unsafe-', {
+    'src/lib.rs': 'pub struct Buffer;\nunsafe impl Send for Buffer {}\npub unsafe trait Raw {}\npub const fn size() -> usize { 0 }\npub unsafe fn poke() {}\npub extern "C" fn ffi() {}\n',
+  });
+  const has = (kind, name) => graph.nodes.some((n) => n.id === `symbol:src/lib.rs#${kind}:${name}`);
+  assert(has('type', 'Send for Buffer'), 'an unsafe impl is a type binding');
+  assert(has('interface', 'Raw'), 'an unsafe trait is an interface');
+  for (const name of ['size', 'poke', 'ffi']) assert(has('function', name), `${name} is claimed`);
+});
+
+test('items inside inline mod and impl bodies are never claimed, even unindented', () => {
+  const graph = rustGraph('genesis-rust-scope-', {
+    'src/lib.rs': [
+      'mod internal {',
+      'pub fn helper() {}',
+      'pub struct Hidden;',
+      '}',
+      'impl Outer {',
+      'fn method() { let s = "}"; let c = \'}\'; let r = r#"{ } }"#; }',
+      '}',
+      '/* a comment { with a brace',
+      'fn commented() {} */',
+      'pub struct Outer;',
+      "fn lifetimes<'a>(x: &'a str) -> &'a str { x }",
+      'pub fn after() {}',
+    ].join('\n') + '\n',
+  });
+  const names = graph.nodes.filter((n) => n.type === 'symbol' && n.path === 'src/lib.rs').map((n) => n.name).sort();
+  assert.deepEqual(names, ['Outer', 'Outer', 'after', 'lifetimes'].sort(), 'only depth-0 items survive; braces in literals and comments do not shift depth');
+});
+
 test('artifacts are published atomically and leave no staging files', () => {
   const root = fixture();
   execFileSync(process.execPath, [graphizer, root, '--write']);

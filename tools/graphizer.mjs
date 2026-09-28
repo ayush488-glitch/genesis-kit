@@ -134,6 +134,9 @@ function resolvePythonImport(from, specifier) { const match = specifier.match(/^
 // items in `net/`, while `mod.rs` and the crate roots own their own directory.
 const rustCrateBase = existsSync(join(root, 'src')) ? join(root, 'src') : root;
 const tryRustCandidates = base => { for (const candidate of [`${base}.rs`, join(base, 'mod.rs')]) if (known.has(candidate)) return candidate; };
+// The module a bare `crate`, `super` or `self` names (as in `use crate::*`): a crate root owns
+// its directory through lib.rs or main.rs, any other module through base.rs or base/mod.rs.
+const tryRustModuleFile = base => { for (const candidate of [join(base, 'lib.rs'), join(base, 'main.rs'), `${base}.rs`, join(base, 'mod.rs')]) if (known.has(candidate)) return candidate; };
 const rustSelfBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dir : join(dir, stem); };
 const rustSuperBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dirname(dir) : dir; };
 const rustCrateBases = new Map();
@@ -166,6 +169,7 @@ function resolveRustImport(from, specifier) {
     for (let step = 0; step < supers; step += 1) base = step === 0 ? rustSuperBase(from) : dirname(base);
   }
   else return null;
+  if (!rest.length) return parts[0] === 'self' ? from : tryRustModuleFile(base);
   return tryRustCandidates(join(base, ...rest)) ?? tryRustCandidates(join(base, ...rest.slice(0, -1)));
 }
 function addDependency(from, specifier, line, language, standard = false) {
@@ -266,53 +270,92 @@ function extractJs(source) {
 }
 
 // --- Rust: the same anchored line scan as JavaScript, no parser ---
-// Items must begin their own line at column 0, so methods inside `impl` blocks and items inside
-// inline `mod` blocks are never claimed; a file module's items live in their own file and are
-// scanned on their own. `impl Trait for Type` is matched by one regex with an optional `for`
-// group, because a separate inherent-impl pattern would also match the trait form.
+// Items must begin their own line at column 0 and sit at brace depth 0, so methods inside `impl`
+// blocks and items inside inline `mod` blocks are never claimed even when they are not indented;
+// a file module's items live in their own file and are scanned on their own. Depth counting skips
+// braces inside comments, string and char literals. `impl Trait for Type` is matched by one regex
+// with an optional `for` group, because a separate inherent-impl pattern would also match the
+// trait form.
 const RUST_VIS = '(?:pub(?:\\([^)]*\\))?\\s+)?';
 const RUST_PATTERNS = [
-  ['function', new RegExp(`^${RUST_VIS}(?:async\\s+)?fn\\s+${NAME}`)],
+  ['function', new RegExp(`^${RUST_VIS}(?:const\\s+)?(?:async\\s+)?(?:unsafe\\s+)?(?:extern\\s+(?:"[^"]*"\\s+)?)?fn\\s+${NAME}`)],
   ['class', new RegExp(`^${RUST_VIS}struct\\s+${NAME}`)],
   ['enum', new RegExp(`^${RUST_VIS}enum\\s+${NAME}`)],
-  ['interface', new RegExp(`^${RUST_VIS}trait\\s+${NAME}`)],
+  ['interface', new RegExp(`^${RUST_VIS}(?:unsafe\\s+)?(?:auto\\s+)?trait\\s+${NAME}`)],
 ];
-const rustImpl = /^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*))?/;
+const rustImpl = /^(?:unsafe\s+)?impl(?:<[^>]*>)?\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?:<[^>]*>)?(?:\s+for\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*))?/;
 const rustMod = new RegExp(`^${RUST_VIS}mod\\s+${NAME}\\s*;`);
 const rustUseLine = new RegExp(`^${RUST_VIS}use\\s+([^;]+);`);
 // Expand one `use` clause into import edges plus import bindings, the way rustc reads it:
-// `use a::b::{self, C as D, *}` binds the module b, D from a::b::C, and everything in a::b::*.
-// Grouped and glob forms are handled line by line, so a clause wrapped across lines is skipped.
-function rustUse(clause, line, imports, bindings) {
-  const glob = clause.endsWith('::*');
-  if (glob) clause = clause.slice(0, -3);
-  const group = clause.match(/^(.*::)?\{(.*)\}$/);
-  const prefix = glob && !group ? clause : group ? (group[1] || '').replace(/::$/, '') : null;
-  for (const raw of (group ? group[2] : glob ? '*' : clause).split(',')) {
-    const item = raw.trim();
-    if (!item || item.includes('{') || item.includes('}')) continue;
-    let path = prefix, local, imported;
-    if (item === '*') { local = '*'; imported = '*'; }
-    else if (item === 'self') { local = prefix.split('::').pop(); imported = 'self'; }
-    else {
-      const alias = item.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
-      const name = alias ? alias[1].trim() : item;
-      path = prefix ? `${prefix}::${name}` : name;
-      local = alias ? alias[2] : name.split('::').pop();
-      imported = name.split('::').pop();
-    }
-    if (!path) continue;
-    imports.push({ specifier: path, line, standard: /^(?:std|core|alloc)::/.test(path) });
-    bindings.push({ local, imported, specifier: path });
+// `use a::b::{self, C as D, e::{F, G}, *}` binds the module b, D from a::b::C, F and G from
+// a::b::e, and everything in a::b::*. Groups nest to any depth. Clauses are read line by line, so
+// a clause wrapped across lines is skipped.
+const RUST_STD = /^(?:std|core|alloc)(?:::|$)/;
+function splitRustGroup(inner) {
+  const parts = []; let depth = 0, from = 0;
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === '{') depth += 1;
+    else if (inner[i] === '}') depth -= 1;
+    else if (inner[i] === ',' && depth === 0) { parts.push(inner.slice(from, i)); from = i + 1; }
   }
+  parts.push(inner.slice(from));
+  return parts;
+}
+function rustUse(clause, line, imports, bindings, prefix = null) {
+  const tree = clause.trim(), join2 = (a, b) => a && b ? `${a}::${b}` : a || b;
+  if (!tree) return;
+  const open = tree.indexOf('{');
+  if (open !== -1) {
+    if (!tree.endsWith('}')) return;
+    const scope = join2(prefix, tree.slice(0, open).replace(/::$/, '').trim());
+    for (const part of splitRustGroup(tree.slice(open + 1, -1))) rustUse(part, line, imports, bindings, scope);
+    return;
+  }
+  let path, local, imported;
+  if (tree === '*' || tree.endsWith('::*')) { path = join2(prefix, tree.slice(0, -1).replace(/::$/, '')); local = '*'; imported = '*'; }
+  else if (tree === 'self') { path = prefix; local = prefix?.split('::').pop(); imported = 'self'; }
+  else {
+    const alias = tree.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
+    const name = alias ? alias[1].trim() : tree;
+    path = join2(prefix, name);
+    local = alias ? alias[2] : name.split('::').pop();
+    imported = name.split('::').pop();
+  }
+  if (!path) return;
+  imports.push({ specifier: path, line, standard: RUST_STD.test(path) });
+  bindings.push({ local, imported, specifier: path });
+}
+// Net brace change of one line, ignoring braces in comments and in string, raw string and char
+// literals. `state` carries an open block comment or string across lines.
+function rustBraceDelta(line, state) {
+  let delta = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i], next = line[i + 1];
+    if (state.comment) { if (c === '*' && next === '/') { state.comment -= 1; i += 1; } else if (c === '/' && next === '*') { state.comment += 1; i += 1; } continue; }
+    if (state.string !== null) {
+      if (state.string === '' && c === '\\') { i += 1; continue; }
+      if (c === '"' && line.startsWith(state.string, i + 1)) { i += state.string.length; state.string = null; }
+      continue;
+    }
+    if (c === '/' && next === '/') break;
+    if (c === '/' && next === '*') { state.comment = 1; i += 1; continue; }
+    const raw = /^b?r(#*)"/.exec(line.slice(i));
+    if (raw && !/\w/.test(line[i - 1] ?? '')) { state.string = raw[1]; i += raw[0].length - 1; continue; }
+    if (c === '"') { state.string = ''; continue; }
+    if (c === "'") { const char = /^'(?:\\(?:u\{[0-9A-Fa-f]*\}|x[0-9A-Fa-f]{2}|.)|[^\\'])'/.exec(line.slice(i)); if (char) i += char[0].length - 1; continue; }
+    if (c === '{') delta += 1; else if (c === '}') delta -= 1;
+  }
+  return delta;
 }
 function extractRust(source) {
-  const symbols = [], imports = [], bindings = [], lines = source.split('\n');
+  const symbols = [], imports = [], bindings = [], lines = source.split('\n'), state = { comment: 0, string: null };
+  let depth = 0;
   for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    if (!line) continue;
+    const line = lines[index], top = depth === 0 && !state.comment && state.string === null;
+    depth = Math.max(0, depth + rustBraceDelta(line, state));
+    if (!line || !top) continue;
     // `mod foo;` names a file module and becomes an import edge; an inline `mod foo { ... }`
-    // owns its items, needs no edge and matches nothing (its body is indented).
+    // owns its items, needs no edge and matches nothing (its body sits at brace depth 1).
     const mod = rustMod.exec(line);
     if (mod) { imports.push({ specifier: `self::${mod[1]}`, line: index + 1 }); continue; }
     const use = rustUseLine.exec(line);
