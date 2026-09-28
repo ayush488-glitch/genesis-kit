@@ -489,6 +489,38 @@ test('aliased self and a leading :: keep their meaning', () => {
   assert(!graph.nodes.some((n) => n.id === 'package:crates:'), 'no empty crate name is ever recorded');
 });
 
+test('a use clause wrapped across lines is collected up to its own semicolon', () => {
+  const graph = rustGraph('genesis-rust-wrap-', {
+    'src/lib.rs': [
+      'pub mod net;',
+      'use crate::net::{',
+      '    tcp::{Socket, Listener}, // not; an import',
+      '    /* pool; */ pool::Pool,',
+      '};',
+      'use std::{',
+      '    fmt,',
+      '    io,',
+      '};',
+      'pub fn after() { let s = "use fake::Thing;"; }',
+      'pub struct Tail;',
+    ].join('\n') + '\n',
+    'src/net/mod.rs': 'pub mod tcp;\npub mod pool;\n',
+    'src/net/tcp.rs': 'pub struct Socket;\npub struct Listener;\n',
+    'src/net/pool.rs': 'pub struct Pool;\n',
+  });
+  const edges = graph.edges.filter((e) => e.type === 'imports' && e.source === 'file:src/lib.rs');
+  const target = (specifier) => edges.find((e) => e.specifier === specifier);
+  assert.equal(target('crate::net::tcp::Socket').target, 'file:src/net/tcp.rs', 'a wrapped nested group expands');
+  assert.equal(target('crate::net::tcp::Socket').line, 2, 'the edge points at the line the clause starts on');
+  assert.equal(target('crate::net::tcp::Listener').target, 'file:src/net/tcp.rs');
+  assert.equal(target('crate::net::pool::Pool').target, 'file:src/net/pool.rs', 'a semicolon in a block comment does not end the clause');
+  assert.equal(target('std::fmt').target, 'runtime:rust:std');
+  assert.equal(target('std::io').target, 'runtime:rust:std');
+  assert(!edges.some((e) => /not|fake/.test(e.specifier)), 'comments and string literals never become imports');
+  const names = graph.nodes.filter((n) => n.type === 'symbol' && n.path === 'src/lib.rs').map((n) => n.name).sort();
+  assert.deepEqual(names, ['Tail', 'after'], 'items after a wrapped clause are still claimed');
+});
+
 test('artifacts are published atomically and leave no staging files', () => {
   const root = fixture();
   execFileSync(process.execPath, [graphizer, root, '--write']);

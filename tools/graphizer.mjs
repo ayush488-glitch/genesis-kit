@@ -313,8 +313,8 @@ const rustMod = new RegExp(`^${RUST_VIS}mod\\s+${NAME}\\s*;`);
 const rustUseLine = new RegExp(`^${RUST_VIS}use\\s+([^;]+);`);
 // Expand one `use` clause into import edges plus import bindings, the way rustc reads it:
 // `use a::b::{self, C as D, e::{F, G}, *}` binds the module b, D from a::b::C, F and G from
-// a::b::e, and everything in a::b::*. Groups nest to any depth. Clauses are read line by line, so
-// a clause wrapped across lines is skipped.
+// a::b::e, and everything in a::b::*. Groups nest to any depth. A clause wrapped across lines, as
+// rustfmt writes long groups, is collected up to its terminating semicolon first.
 const RUST_STD = /^(?:std|core|alloc)(?:::|$)/;
 function splitRustGroup(inner) {
   const parts = []; let depth = 0, from = 0;
@@ -351,10 +351,11 @@ function rustUse(clause, line, imports, bindings, prefix = null) {
   imports.push({ specifier: path, line, standard: RUST_STD.test(path) });
   bindings.push({ local, imported, specifier: path });
 }
-// Net brace change of one line, ignoring braces in comments and in string, raw string and char
-// literals. `state` carries an open block comment or string across lines.
-function rustBraceDelta(line, state) {
-  let delta = 0;
+// The code of one line with comments dropped and every string, raw string and char literal
+// reduced to an empty `""`, so braces and semicolons inside them never count. `state` carries an
+// open block comment or string across lines.
+function rustCode(line, state) {
+  let code = '';
   for (let i = 0; i < line.length; i++) {
     const c = line[i], next = line[i + 1];
     if (state.comment) { if (c === '*' && next === '/') { state.comment -= 1; i += 1; } else if (c === '/' && next === '*') { state.comment += 1; i += 1; } continue; }
@@ -366,26 +367,38 @@ function rustBraceDelta(line, state) {
     if (c === '/' && next === '/') break;
     if (c === '/' && next === '*') { state.comment = 1; i += 1; continue; }
     const raw = /^b?r(#*)"/.exec(line.slice(i));
-    if (raw && !/\w/.test(line[i - 1] ?? '')) { state.string = raw[1]; i += raw[0].length - 1; continue; }
-    if (c === '"') { state.string = ''; continue; }
-    if (c === "'") { const char = /^'(?:\\(?:u\{[0-9A-Fa-f]*\}|x[0-9A-Fa-f]{2}|.)|[^\\'])'/.exec(line.slice(i)); if (char) i += char[0].length - 1; continue; }
-    if (c === '{') delta += 1; else if (c === '}') delta -= 1;
+    if (raw && !/\w/.test(line[i - 1] ?? '')) { code += '""'; state.string = raw[1]; i += raw[0].length - 1; continue; }
+    if (c === '"') { code += '""'; state.string = ''; continue; }
+    if (c === "'") { const char = /^'(?:\\(?:u\{[0-9A-Fa-f]*\}|x[0-9A-Fa-f]{2}|.)|[^\\'])'/.exec(line.slice(i)); if (char) { code += "' '"; i += char[0].length - 1; continue; } }
+    code += c;
   }
-  return delta;
+  return code;
 }
+const rustBraces = code => { let delta = 0; for (const c of code) { if (c === '{') delta += 1; else if (c === '}') delta -= 1; } return delta; };
+const rustUseStart = new RegExp(`^${RUST_VIS}use\\s+([^;]*)$`);
 function extractRust(source) {
   const symbols = [], imports = [], bindings = [], lines = source.split('\n'), state = { comment: 0, string: null };
-  let depth = 0;
+  let depth = 0, pending = null;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index], top = depth === 0 && !state.comment && state.string === null;
-    depth = Math.max(0, depth + rustBraceDelta(line, state));
+    const code = rustCode(line, state);
+    depth = Math.max(0, depth + rustBraces(code));
+    // A top-level `use` wrapped across lines keeps collecting code until its own semicolon.
+    if (pending) {
+      pending.clause += ` ${code}`;
+      const end = pending.clause.indexOf(';');
+      if (end !== -1) { rustUse(pending.clause.slice(0, end), pending.line, imports, bindings); pending = null; }
+      continue;
+    }
     if (!line || !top) continue;
     // `mod foo;` names a file module and becomes an import edge; an inline `mod foo { ... }`
     // owns its items, needs no edge and matches nothing (its body sits at brace depth 1).
     const mod = rustMod.exec(line);
     if (mod) { imports.push({ specifier: `self::${mod[1]}`, line: index + 1, module: true }); continue; }
-    const use = rustUseLine.exec(line);
+    const use = rustUseLine.exec(code);
     if (use) { rustUse(use[1], index + 1, imports, bindings); continue; }
+    const open = rustUseStart.exec(code.trimEnd());
+    if (open) { pending = { clause: open[1], line: index + 1 }; continue; }
     const impl = rustImpl.exec(line);
     if (impl) { symbols.push({ kind: 'type', name: impl[2] ? `${impl[1]} for ${impl[2]}` : impl[1], line: index + 1 }); continue; }
     for (const [kind, pattern] of RUST_PATTERNS) { const match = pattern.exec(line); if (match) { symbols.push({ kind, name: match[1], line: index + 1 }); break; } }
