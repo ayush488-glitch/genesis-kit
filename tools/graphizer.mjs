@@ -15,12 +15,13 @@ const outPath = resolve(outIndex < 0 ? join(root, '.genesis', 'index', 'graph.js
 const IGNORE = new Set(['.cache', '.genesis', '.git', '.next', '.turbo', '.venv', '__pycache__', 'build', 'coverage', 'dist', 'node_modules', 'out', 'target', 'venv']);
 const CODE = new Set(['.cjs', '.js', '.jsx', '.mjs', '.py', '.ts', '.tsx']);
 const CONFIGS = new Set(['jsconfig.json', 'tsconfig.json']);
+const PY_CONFIGS = new Set(['pyproject.toml', 'setup.cfg']);
 const JS_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'];
 const NODE_BUILTINS = new Set(builtinModules.map(name => name.replace(/^node:/, '')));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const posix = value => value.split(sep).join('/');
-function walk(dir, files = [], configs = []) { for (const name of readdirSync(dir).sort()) { if (IGNORE.has(name) || name.startsWith('.DS')) continue; const path = join(dir, name); let stat; try { stat = lstatSync(path); } catch { continue; } if (stat.isSymbolicLink()) continue; if (stat.isDirectory()) walk(path, files, configs); else if (CODE.has(extname(name))) files.push(path); else if (CONFIGS.has(name)) configs.push(path); } return { files, configs }; }
-const { files, configs } = walk(root), known = new Set(files), nodes = new Map(), edges = new Map(), warnings = [];
+function walk(dir, files = [], configs = [], pyConfigs = []) { for (const name of readdirSync(dir).sort()) { if (IGNORE.has(name) || name.startsWith('.DS')) continue; const path = join(dir, name); let stat; try { stat = lstatSync(path); } catch { continue; } if (stat.isSymbolicLink()) continue; if (stat.isDirectory()) walk(path, files, configs, pyConfigs); else if (CODE.has(extname(name))) files.push(path); else if (CONFIGS.has(name)) configs.push(path); else if (PY_CONFIGS.has(name)) pyConfigs.push(path); } return { files, configs, pyConfigs }; }
+const { files, configs, pyConfigs } = walk(root), known = new Set(files), nodes = new Map(), edges = new Map(), warnings = [];
 const fileId = path => `file:${posix(relative(root, path))}`;
 const addNode = node => nodes.set(node.id, node);
 // Keyed by a derivable identity so edges dedupe and sort deterministically without storing it.
@@ -126,7 +127,37 @@ function resolveWorkspace(specifier) {
 function packageName(specifier) { const parts = specifier.split('/'); return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]; }
 // undefined means "looked like local source but was not found"; null means "external package".
 function resolveJsImport(from, specifier) { if (specifier.startsWith('.') || specifier.startsWith('/')) return tryCandidates(resolve(dirname(from), specifier)); return resolveAlias(from, specifier) ?? resolveWorkspace(specifier) ?? null; }
-function resolvePythonImport(from, specifier) { const match = specifier.match(/^(\.+)(.*)$/); let base = match ? dirname(from) : root, module = match ? match[2] : specifier; if (match) for (let i = 1; i < match[1].length; i++) base = dirname(base); const path = join(base, ...module.split('.').filter(Boolean)); for (const candidate of [`${path}.py`, join(path, '__init__.py')]) if (known.has(candidate)) return candidate; return match ? undefined : null; }
+// Python has no import map. Under a src/ layout the top-level packages sit one directory below the
+// repository root, so `import agents.x` resolves against <root>/src and not against <root>; read the
+// root a project declares and fall back to the src/ convention. Roots are tried after the repository
+// root, so every edge that resolved before still resolves the same way, and a candidate must already
+// be in the index to win. A source root can therefore turn a wrong package edge into a real file
+// edge; it cannot invent one.
+function declaredPythonRoots(config) {
+  const dir = dirname(config), out = [];
+  let text; try { text = readFileSync(config, 'utf8'); } catch { return out; }
+  if (basename(config) === 'pyproject.toml') {
+    const find = text.match(/\[tool\.setuptools\.packages\.find\]([\s\S]*?)(?=\n\s*\[|$)/);
+    const where = find && find[1].match(/\bwhere\s*=\s*\[([^\]]*)\]/);
+    if (where) for (const value of where[1].matchAll(/["']([^"']+)["']/g)) out.push(join(dir, value[1]));
+    // poetry: packages = [{ include = "pkg", from = "src" }]
+    for (const value of text.matchAll(/\bfrom\s*=\s*["']([^"']+)["']/g)) out.push(join(dir, value[1]));
+  } else {
+    // setup.cfg: package_dir is an indented block whose bare "= src" entry names the root.
+    const block = text.match(/^\s*package_dir\s*=([\s\S]*?)(?=\n\s*\[|\n\S|$)/m);
+    if (block) for (const value of block[1].matchAll(/^\s*=\s*(\S+)\s*$/gm)) out.push(join(dir, value[1]));
+  }
+  return out;
+}
+const pythonRoots = [...new Set([root, ...pyConfigs.flatMap(declaredPythonRoots), join(root, 'src')])]
+  .filter(dir => dir === root || existsSync(dir));
+const knownPython = path => [`${path}.py`, join(path, '__init__.py')].find(candidate => known.has(candidate));
+function resolvePythonImport(from, specifier) {
+  const match = specifier.match(/^(\.+)(.*)$/), parts = (match ? match[2] : specifier).split('.').filter(Boolean);
+  if (match) { let base = dirname(from); for (let i = 1; i < match[1].length; i++) base = dirname(base); return knownPython(join(base, ...parts)); }
+  for (const base of pythonRoots) { const hit = knownPython(join(base, ...parts)); if (hit) return hit; }
+  return null;
+}
 function addDependency(from, specifier, line, language, standard = false) {
   const target = language === 'javascript' ? resolveJsImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
   const confidence = .85;
