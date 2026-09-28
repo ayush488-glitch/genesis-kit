@@ -137,25 +137,50 @@ const tryRustCandidates = base => { for (const candidate of [`${base}.rs`, join(
 // The module a bare `crate`, `super` or `self` names (as in `use crate::*`): a crate root owns
 // its directory through lib.rs or main.rs, any other module through base.rs or base/mod.rs.
 const tryRustModuleFile = base => { for (const candidate of [join(base, 'lib.rs'), join(base, 'main.rs'), `${base}.rs`, join(base, 'mod.rs')]) if (known.has(candidate)) return candidate; };
-const rustSelfBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dir : join(dir, stem); };
-const rustSuperBase = from => { const dir = dirname(from), stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' ? dirname(dir) : dir; };
-const rustCrateBases = new Map();
-function rustCrateBaseOf(from) {
-  const dir = dirname(from);
-  if (rustCrateBases.has(dir)) return rustCrateBases.get(dir);
-  let base = null;
+const rustPackages = new Map();
+function rustPackageOf(dir) {
+  if (rustPackages.has(dir)) return rustPackages.get(dir);
+  let found = null;
   for (let probe = dir; probe === root || probe.startsWith(root + sep); probe = dirname(probe)) {
-    if (existsSync(join(probe, 'Cargo.toml'))) { base = existsSync(join(probe, 'src')) ? join(probe, 'src') : probe; break; }
+    if (existsSync(join(probe, 'Cargo.toml'))) { found = probe; break; }
     if (probe === root) break;
   }
-  rustCrateBases.set(dir, base ?? rustCrateBase);
-  return base ?? rustCrateBase;
+  rustPackages.set(dir, found);
+  return found;
+}
+// Cargo auto-discovers every file in src/bin/, examples/, tests/ and benches/ as a crate of its
+// own, and a <target dir>/<name>/main.rs as one whose modules live beside it. Such a crate's
+// modules hang off its target directory, never off the package's src/, and its root file owns
+// that directory the way lib.rs and main.rs own src/. Returns null for library and src/main.rs
+// files, which share the package's src/.
+function rustTargetOf(from) {
+  const pkg = rustPackageOf(dirname(from));
+  if (!pkg) return null;
+  const parts = relative(pkg, from).split(sep);
+  let dir, rest;
+  if (parts[0] === 'src' && parts[1] === 'bin') { dir = join(pkg, 'src', 'bin'); rest = parts.slice(2); }
+  else if (['examples', 'tests', 'benches'].includes(parts[0])) { dir = join(pkg, parts[0]); rest = parts.slice(1); }
+  else return null;
+  if (rest.length > 1 && known.has(join(dir, rest[0], 'main.rs'))) return { crateDir: join(dir, rest[0]), root: rest.length === 2 && rest[1] === 'main.rs' };
+  return { crateDir: dir, root: rest.length === 1 };
+}
+const rustOwnsDir = from => { const stem = basename(from, extname(from)); return stem === 'mod' || stem === 'lib' || stem === 'main' || Boolean(rustTargetOf(from)?.root); };
+const rustSelfBase = from => rustOwnsDir(from) ? dirname(from) : join(dirname(from), basename(from, extname(from)));
+const rustSuperBase = from => rustOwnsDir(from) ? dirname(dirname(from)) : dirname(from);
+function rustCrateBaseOf(from) {
+  const target = rustTargetOf(from);
+  if (target) return target.crateDir;
+  const pkg = rustPackageOf(dirname(from));
+  if (!pkg) return rustCrateBase;
+  return existsSync(join(pkg, 'src')) ? join(pkg, 'src') : pkg;
 }
 // A use path's last segment may name an item inside a module rather than a module itself:
 // `use crate::config::Settings` resolves to config.rs, not config/Settings.rs. Try the whole
 // path as a module first, then fall back to the module that contains the item. Unqualified
 // paths name an external crate in the 2018 edition and later, so they are never probed locally.
-function resolveRustImport(from, specifier) {
+// A `mod foo;` declaration always names a module, so it never takes the item fallback: a
+// missing module file stays unresolved instead of pointing back at the declaring file.
+function resolveRustImport(from, specifier, module = false) {
   const parts = specifier.split('::').filter(Boolean);
   if (!parts.length) return;
   let base = null, rest = parts;
@@ -170,10 +195,10 @@ function resolveRustImport(from, specifier) {
   }
   else return null;
   if (!rest.length) return parts[0] === 'self' ? from : tryRustModuleFile(base);
-  return tryRustCandidates(join(base, ...rest)) ?? tryRustCandidates(join(base, ...rest.slice(0, -1)));
+  return tryRustCandidates(join(base, ...rest)) ?? (module ? undefined : tryRustCandidates(join(base, ...rest.slice(0, -1))));
 }
-function addDependency(from, specifier, line, language, standard = false) {
-  const target = language === 'javascript' ? resolveJsImport(from, specifier) : language === 'rust' ? resolveRustImport(from, specifier) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
+function addDependency(from, specifier, line, language, standard = false, module = false) {
+  const target = language === 'javascript' ? resolveJsImport(from, specifier) : language === 'rust' ? resolveRustImport(from, specifier, module) : resolvePythonImport(from, specifier), source = fileId(from), rel = posix(relative(root, from)), extractor = `${language}-imports`;
   const confidence = .85;
   if (target) return addEdge({ type: 'imports', source, target: fileId(target), specifier, line, resolved: true, confidence, extractor: extractor });
   const name = language === 'rust' ? specifier.split('::')[0] : packageName(specifier.replace(/^node:|^\.+/, ''));
@@ -302,7 +327,8 @@ function splitRustGroup(inner) {
   return parts;
 }
 function rustUse(clause, line, imports, bindings, prefix = null) {
-  const tree = clause.trim(), join2 = (a, b) => a && b ? `${a}::${b}` : a || b;
+  // A leading `::` (as in `use ::std::fmt`) only insists the path starts at a crate name.
+  const tree = prefix ? clause.trim() : clause.trim().replace(/^::/, ''), join2 = (a, b) => a && b ? `${a}::${b}` : a || b;
   if (!tree) return;
   const open = tree.indexOf('{');
   if (open !== -1) {
@@ -312,11 +338,11 @@ function rustUse(clause, line, imports, bindings, prefix = null) {
     return;
   }
   let path, local, imported;
+  // `self` in a group names the group's own module, aliased or not: `{self, self as root}`.
+  const alias = tree.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/), name = alias ? alias[1].trim() : tree;
   if (tree === '*' || tree.endsWith('::*')) { path = join2(prefix, tree.slice(0, -1).replace(/::$/, '')); local = '*'; imported = '*'; }
-  else if (tree === 'self') { path = prefix; local = prefix?.split('::').pop(); imported = 'self'; }
+  else if (name === 'self') { path = prefix; local = alias ? alias[2] : prefix?.split('::').pop(); imported = 'self'; }
   else {
-    const alias = tree.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
-    const name = alias ? alias[1].trim() : tree;
     path = join2(prefix, name);
     local = alias ? alias[2] : name.split('::').pop();
     imported = name.split('::').pop();
@@ -357,7 +383,7 @@ function extractRust(source) {
     // `mod foo;` names a file module and becomes an import edge; an inline `mod foo { ... }`
     // owns its items, needs no edge and matches nothing (its body sits at brace depth 1).
     const mod = rustMod.exec(line);
-    if (mod) { imports.push({ specifier: `self::${mod[1]}`, line: index + 1 }); continue; }
+    if (mod) { imports.push({ specifier: `self::${mod[1]}`, line: index + 1, module: true }); continue; }
     const use = rustUseLine.exec(line);
     if (use) { rustUse(use[1], index + 1, imports, bindings); continue; }
     const impl = rustImpl.exec(line);
@@ -452,7 +478,7 @@ for (const [rel, entry] of entries) {
     addNode({ id, type: 'symbol', kind: symbol.kind, name: symbol.name, label: symbol.name, path: rel, line: symbol.line, confidence: python ? 1 : .8, extractor, contentHash: hash(`${symbol.kind}:${symbol.name}`) });
     addEdge({ type: 'defines', source: `file:${rel}`, target: id, line: symbol.line, resolved: true, confidence: python ? 1 : .8, extractor });
   }
-  for (const item of entry.imports) addDependency(entry.path, item.specifier, item.line, entry.language, item.standard);
+  for (const item of entry.imports) addDependency(entry.path, item.specifier, item.line, entry.language, item.standard, item.module);
   const imports = new Map();
   for (const binding of entry.bindings) {
     const target = python ? resolvePythonImport(entry.path, binding.specifier) : rust ? resolveRustImport(entry.path, binding.specifier) : resolveJsImport(entry.path, binding.specifier);

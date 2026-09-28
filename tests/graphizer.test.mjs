@@ -341,14 +341,14 @@ test('crate:: paths resolve inside the workspace member that imports them', () =
   write('crates/api/Cargo.toml', '[package]\nname = "api"\n');
   write('crates/api/src/lib.rs', 'use crate::config::Settings;\n\npub struct App;\n');
   write('crates/api/src/config.rs', 'pub struct Settings;\n');
-  write('crates/api/src/bin/run.rs', 'use crate::config::Settings;\n');
+  write('crates/api/src/net/pool.rs', 'use crate::config::Settings;\n');
   write('crates/util/Cargo.toml', '[package]\nname = "util"\n');
   write('crates/util/src/lib.rs', 'use crate::math::Vec2;\n\npub fn helper() {}\n');
   write('crates/util/src/math.rs', 'pub struct Vec2;\n');
   const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
   const edge = (source) => graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::config::Settings' && e.source === source);
   assert.equal(edge('file:crates/api/src/lib.rs').target, 'file:crates/api/src/config.rs', 'the member crate root, not the workspace root');
-  assert.equal(edge('file:crates/api/src/bin/run.rs').target, 'file:crates/api/src/config.rs', 'from a nested directory the nearest enclosing crate still wins');
+  assert.equal(edge('file:crates/api/src/net/pool.rs').target, 'file:crates/api/src/config.rs', 'from a nested module the nearest enclosing crate still wins');
   const utilEdge = graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::math::Vec2' && e.source === 'file:crates/util/src/lib.rs');
   assert.equal(utilEdge.target, 'file:crates/util/src/math.rs', 'a crate:: path in the second member resolves inside that member, not another crate');
 });
@@ -446,6 +446,47 @@ test('items inside inline mod and impl bodies are never claimed, even unindented
   });
   const names = graph.nodes.filter((n) => n.type === 'symbol' && n.path === 'src/lib.rs').map((n) => n.name).sort();
   assert.deepEqual(names, ['Outer', 'Outer', 'after', 'lifetimes'].sort(), 'only depth-0 items survive; braces in literals and comments do not shift depth');
+});
+
+test('binaries, examples, tests and benches are crates of their own', () => {
+  const graph = rustGraph('genesis-rust-targets-', {
+    'Cargo.toml': '[package]\nname = "app"\n',
+    'src/lib.rs': 'pub mod config;\n',
+    'src/config.rs': 'pub struct Settings;\n',
+    'src/bin/run.rs': 'mod helper;\nuse crate::config::Settings;\n',
+    'src/bin/helper.rs': 'pub fn help() {}\n',
+    'src/bin/config.rs': 'pub struct Settings;\n',
+    'src/bin/tool/main.rs': 'mod cli;\nuse crate::cli::Args;\n',
+    'src/bin/tool/cli.rs': 'pub struct Args;\n',
+    'examples/demo.rs': 'mod missing;\n',
+    'tests/it.rs': 'mod common;\nuse crate::common::setup;\n',
+    'tests/common/mod.rs': 'pub fn setup() {}\n',
+  });
+  const target = (source, specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === `file:${source}` && e.specifier === specifier)?.target;
+  assert.equal(target('src/bin/run.rs', 'crate::config::Settings'), 'file:src/bin/config.rs', 'a binary never reaches into the library crate through crate::');
+  assert.equal(target('src/bin/run.rs', 'self::helper'), 'file:src/bin/helper.rs', 'a binary root owns src/bin/ the way lib.rs owns src/');
+  assert.equal(target('src/bin/tool/main.rs', 'self::cli'), 'file:src/bin/tool/cli.rs', 'a directory binary owns its own directory');
+  assert.equal(target('src/bin/tool/main.rs', 'crate::cli::Args'), 'file:src/bin/tool/cli.rs');
+  assert.equal(target('tests/it.rs', 'self::common'), 'file:tests/common/mod.rs', 'an integration test owns tests/');
+  assert.equal(target('tests/it.rs', 'crate::common::setup'), 'file:tests/common/mod.rs');
+  assert.notEqual(target('examples/demo.rs', 'self::missing'), 'file:examples/demo.rs', 'a missing module is never a self-loop');
+  assert(!graph.edges.some((e) => e.type === 'imports' && e.source === e.target), 'no import edge points back at its own file');
+});
+
+test('aliased self and a leading :: keep their meaning', () => {
+  const graph = rustGraph('genesis-rust-alias-', {
+    'src/lib.rs': 'pub mod config;\nuse crate::{self as root};\nuse crate::config::{self as cfg, Settings};\nuse ::std::fmt;\nuse ::serde::Serialize;\nuse ::{core::mem, log::info};\n',
+    'src/config.rs': 'pub struct Settings;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate'), 'file:src/lib.rs', 'self as root names the crate itself');
+  assert.equal(target('crate::config'), 'file:src/config.rs', 'self as cfg names the group module');
+  assert(!graph.edges.some((e) => /::self$/.test(e.specifier ?? '')), 'self is never appended as a path segment');
+  assert.equal(target('std::fmt'), 'runtime:rust:std', 'a leading :: still reaches the standard library');
+  assert.equal(target('serde::Serialize'), 'package:crates:serde', 'a leading :: still names the external crate');
+  assert.equal(target('core::mem'), 'runtime:rust:core');
+  assert.equal(target('log::info'), 'package:crates:log');
+  assert(!graph.nodes.some((n) => n.id === 'package:crates:'), 'no empty crate name is ever recorded');
 });
 
 test('artifacts are published atomically and leave no staging files', () => {
