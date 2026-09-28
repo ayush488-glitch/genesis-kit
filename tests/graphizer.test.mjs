@@ -255,6 +255,272 @@ test('an aliased parent class resolves to the name the target file declares', ()
   assert(graph.edges.some((e) => e.type === 'inherits' && e.source === 'symbol:src/child.ts#class:Child' && e.target === 'symbol:src/base.ts#class:Base'));
 });
 
+function rustFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('src/lib.rs', [
+    'mod config;',
+    'mod net;',
+    '',
+    'use std::collections::HashMap;',
+    'use serde::{Serialize, Deserialize};',
+    'use crate::config::Settings;',
+    'pub use crate::config::Settings as Config;',
+    '',
+    'pub struct App {',
+    '    pub name: String,',
+    '}',
+    'pub(crate) struct Internal;',
+    'pub enum Mode { On, Off }',
+    'pub trait Runner {',
+    '    fn run(&self);',
+    '}',
+    'impl App {',
+    '    pub fn start() {}',
+    '}',
+    'impl Runner for App {',
+    '    fn run(&self) {}',
+    '}',
+    '',
+    'pub async fn launch() {}',
+    'pub fn probe() {}',
+    'fn hidden() {}',
+  ].join('\n') + '\n');
+  write('src/config.rs', 'pub struct Settings {\n    pub debug: bool,\n}\n\npub fn load() -> Settings {\n    Settings { debug: true }\n}\n');
+  write('src/net/mod.rs', 'pub mod tcp;\npub mod pool;\n\nuse crate::config::Settings;\n');
+  write('src/net/tcp.rs', 'pub struct Socket;\n');
+  write('src/net/pool.rs', 'use super::tcp::Socket;\n\npub struct Pool;\n');
+  return root;
+}
+
+test('indexes a Rust crate: modules, use paths and top-level items', () => {
+  const root = rustFixture();
+  const first = execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }), graph = JSON.parse(first);
+  const edge = (source, specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === source && e.specifier === specifier);
+
+  // Every .rs file in the tree is traversed and carries the rust language.
+  for (const id of ['file:src/lib.rs', 'file:src/config.rs', 'file:src/net/mod.rs', 'file:src/net/tcp.rs', 'file:src/net/pool.rs']) {
+    assert.equal(graph.nodes.find((n) => n.id === id).language, 'rust', id);
+  }
+
+  assert.equal(edge('file:src/lib.rs', 'self::config').target, 'file:src/config.rs', 'a `mod` declaration resolves to its file');
+  assert.equal(edge('file:src/lib.rs', 'self::net').target, 'file:src/net/mod.rs', 'a directory module resolves to its mod.rs');
+  assert.equal(edge('file:src/lib.rs', 'crate::config::Settings').target, 'file:src/config.rs', 'a crate:: path resolves against the crate root, item fallback to the parent module');
+  assert.equal(edge('file:src/net/pool.rs', 'super::tcp::Socket').target, 'file:src/net/tcp.rs', 'a super:: path resolves against the parent module of a file module');
+  assert.equal(edge('file:src/lib.rs', 'std::collections::HashMap').target, 'runtime:rust:std', 'the standard library is a runtime node');
+  const external = edge('file:src/lib.rs', 'serde::Serialize');
+  assert.equal(external.target, 'package:crates:serde', 'an external crate stays a package');
+  assert.equal(external.resolved, false);
+
+  const symbol = (path, kind, name) => graph.nodes.find((n) => n.type === 'symbol' && n.id === `symbol:${path}#${kind}:${name}`);
+  assert(symbol('src/lib.rs', 'class', 'App') && symbol('src/lib.rs', 'class', 'Internal'), 'structs are classes, including pub(crate)');
+  assert(symbol('src/lib.rs', 'enum', 'Mode'), 'enums are claimed');
+  assert(symbol('src/lib.rs', 'interface', 'Runner'), 'traits are interfaces');
+  assert(symbol('src/lib.rs', 'function', 'launch') && symbol('src/lib.rs', 'function', 'hidden'), 'async and private fns are claimed');
+  assert(symbol('src/lib.rs', 'type', 'Runner for App') && symbol('src/lib.rs', 'type', 'App'), 'impl blocks are type bindings');
+  assert.equal(symbol('src/lib.rs', 'function', 'launch').extractor, 'conservative-rust-symbols');
+  assert(!graph.nodes.some((n) => n.type === 'symbol' && (n.name === 'run' || n.name === 'start')), 'methods inside impl and trait bodies are never claimed');
+
+  // The qualified graph stays deterministic and on the current schema.
+  assert.equal(graph.schemaVersion, 2);
+  assert.equal(first, execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+});
+
+test('a repository without Rust files gains no Rust nodes', () => {
+  const root = fixture();
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  assert(graph.nodes.every((n) => n.language !== 'rust'), 'no node is reported as rust');
+  const rustOnly = (id) => id.startsWith('package:crates:') || id.startsWith('runtime:rust:');
+  assert(!graph.nodes.some((n) => rustOnly(n.id)), 'no rust-only node kinds appear');
+});
+
+test('crate:: paths resolve inside the workspace member that imports them', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-ws-'));
+  const write = (rel, body) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+  write('Cargo.toml', '[workspace]\nmembers = ["crates/*"]\n');
+  write('crates/api/Cargo.toml', '[package]\nname = "api"\n');
+  write('crates/api/src/lib.rs', 'use crate::config::Settings;\n\npub struct App;\n');
+  write('crates/api/src/config.rs', 'pub struct Settings;\n');
+  write('crates/api/src/net/pool.rs', 'use crate::config::Settings;\n');
+  write('crates/util/Cargo.toml', '[package]\nname = "util"\n');
+  write('crates/util/src/lib.rs', 'use crate::math::Vec2;\n\npub fn helper() {}\n');
+  write('crates/util/src/math.rs', 'pub struct Vec2;\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = (source) => graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::config::Settings' && e.source === source);
+  assert.equal(edge('file:crates/api/src/lib.rs').target, 'file:crates/api/src/config.rs', 'the member crate root, not the workspace root');
+  assert.equal(edge('file:crates/api/src/net/pool.rs').target, 'file:crates/api/src/config.rs', 'from a nested module the nearest enclosing crate still wins');
+  const utilEdge = graph.edges.find((e) => e.type === 'imports' && e.specifier === 'crate::math::Vec2' && e.source === 'file:crates/util/src/lib.rs');
+  assert.equal(utilEdge.target, 'file:crates/util/src/math.rs', 'a crate:: path in the second member resolves inside that member, not another crate');
+});
+
+test('consecutive super segments each climb one module level', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-sup-'));
+  mkdirSync(join(root, 'src', 'a', 'b'), { recursive: true });
+  writeFileSync(join(root, 'src', 'a', 'b', 'c.rs'), 'use super::super::shared::Thing;\n\npub struct C;\n');
+  writeFileSync(join(root, 'src', 'a', 'shared.rs'), 'pub struct Thing;\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = graph.edges.find((e) => e.type === 'imports' && e.specifier === 'super::super::shared::Thing' && e.source === 'file:src/a/b/c.rs');
+  assert.equal(edge.target, 'file:src/a/shared.rs', 'the second super keeps climbing instead of being read as a directory name');
+});
+
+test('a glob use path resolves to the module it globs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-glob-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'lib.rs'), 'use crate::util::*;\n\npub fn main() {}\n');
+  writeFileSync(join(root, 'src', 'util.rs'), 'pub fn helper() {}\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === 'crate::util');
+  assert.equal(edge.target, 'file:src/util.rs', 'the glob resolves as the module itself, not as an item of a doubled path');
+  assert.equal(edge.resolved, true);
+});
+
+test('a trait impl names the qualified type it is implemented for', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-rust-impl-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'src', 'lib.rs'), 'mod shape;\n\npub trait Display {}\n\nimpl Display for shape::Circle {\n}\n');
+  writeFileSync(join(root, 'src', 'shape.rs'), 'pub struct Circle;\n');
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  assert(graph.nodes.some((n) => n.type === 'symbol' && n.id === 'symbol:src/lib.rs#type:Display for shape::Circle'), 'the for-group keeps the whole qualified target, not just its first segment');
+});
+
+function rustGraph(prefix, files) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); }
+  return JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+}
+
+test('nested use groups expand every leaf against its full path', () => {
+  const graph = rustGraph('genesis-rust-nest-', {
+    'src/lib.rs': 'mod net;\nuse crate::net::{tcp::{Socket, Listener as L}, pool::*, self};\n',
+    'src/net/mod.rs': 'pub mod tcp;\npub mod pool;\n',
+    'src/net/tcp.rs': 'pub struct Socket;\npub struct Listener;\n',
+    'src/net/pool.rs': 'pub struct Pool;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate::net::tcp::Socket'), 'file:src/net/tcp.rs', 'a leaf of an inner group keeps both group prefixes');
+  assert.equal(target('crate::net::tcp::Listener'), 'file:src/net/tcp.rs', 'an aliased leaf inside an inner group resolves by its real name');
+  assert.equal(target('crate::net::pool'), 'file:src/net/pool.rs', 'a glob inside a group resolves to the globbed module');
+  assert.equal(target('crate::net'), 'file:src/net/mod.rs', 'self inside a group names the group module');
+  assert(!graph.nodes.some((n) => n.type === 'unresolved' && /[{}]/.test(n.label)), 'no brace ever leaks into a specifier');
+});
+
+test('root glob imports resolve to the crate root or the runtime', () => {
+  const graph = rustGraph('genesis-rust-root-', {
+    'src/lib.rs': 'pub mod util;\npub struct Root;\n',
+    'src/util.rs': 'use crate::*;\nuse super::*;\nuse self::*;\nuse std::*;\nuse core::*;\nuse alloc::*;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/util.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate'), 'file:src/lib.rs', 'crate::* globs the crate root');
+  assert.equal(target('super'), 'file:src/lib.rs', 'super::* from a top-level file module globs the crate root');
+  assert.equal(target('self'), 'file:src/util.rs', 'self::* globs the file itself');
+  for (const name of ['std', 'core', 'alloc']) assert.equal(target(name), `runtime:rust:${name}`, `${name}::* is a runtime import`);
+  assert(!graph.nodes.some((n) => /^package:crates:(?:std|core|alloc)$/.test(n.id)), 'the standard crates are never external packages');
+});
+
+test('unsafe and qualified item forms are claimed', () => {
+  const graph = rustGraph('genesis-rust-unsafe-', {
+    'src/lib.rs': 'pub struct Buffer;\nunsafe impl Send for Buffer {}\npub unsafe trait Raw {}\npub const fn size() -> usize { 0 }\npub unsafe fn poke() {}\npub extern "C" fn ffi() {}\n',
+  });
+  const has = (kind, name) => graph.nodes.some((n) => n.id === `symbol:src/lib.rs#${kind}:${name}`);
+  assert(has('type', 'Send for Buffer'), 'an unsafe impl is a type binding');
+  assert(has('interface', 'Raw'), 'an unsafe trait is an interface');
+  for (const name of ['size', 'poke', 'ffi']) assert(has('function', name), `${name} is claimed`);
+});
+
+test('items inside inline mod and impl bodies are never claimed, even unindented', () => {
+  const graph = rustGraph('genesis-rust-scope-', {
+    'src/lib.rs': [
+      'mod internal {',
+      'pub fn helper() {}',
+      'pub struct Hidden;',
+      '}',
+      'impl Outer {',
+      'fn method() { let s = "}"; let c = \'}\'; let r = r#"{ } }"#; }',
+      '}',
+      '/* a comment { with a brace',
+      'fn commented() {} */',
+      'pub struct Outer;',
+      "fn lifetimes<'a>(x: &'a str) -> &'a str { x }",
+      'pub fn after() {}',
+    ].join('\n') + '\n',
+  });
+  const names = graph.nodes.filter((n) => n.type === 'symbol' && n.path === 'src/lib.rs').map((n) => n.name).sort();
+  assert.deepEqual(names, ['Outer', 'Outer', 'after', 'lifetimes'].sort(), 'only depth-0 items survive; braces in literals and comments do not shift depth');
+});
+
+test('binaries, examples, tests and benches are crates of their own', () => {
+  const graph = rustGraph('genesis-rust-targets-', {
+    'Cargo.toml': '[package]\nname = "app"\n',
+    'src/lib.rs': 'pub mod config;\n',
+    'src/config.rs': 'pub struct Settings;\n',
+    'src/bin/run.rs': 'mod helper;\nuse crate::config::Settings;\n',
+    'src/bin/helper.rs': 'pub fn help() {}\n',
+    'src/bin/config.rs': 'pub struct Settings;\n',
+    'src/bin/tool/main.rs': 'mod cli;\nuse crate::cli::Args;\n',
+    'src/bin/tool/cli.rs': 'pub struct Args;\n',
+    'examples/demo.rs': 'mod missing;\n',
+    'tests/it.rs': 'mod common;\nuse crate::common::setup;\n',
+    'tests/common/mod.rs': 'pub fn setup() {}\n',
+  });
+  const target = (source, specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === `file:${source}` && e.specifier === specifier)?.target;
+  assert.equal(target('src/bin/run.rs', 'crate::config::Settings'), 'file:src/bin/config.rs', 'a binary never reaches into the library crate through crate::');
+  assert.equal(target('src/bin/run.rs', 'self::helper'), 'file:src/bin/helper.rs', 'a binary root owns src/bin/ the way lib.rs owns src/');
+  assert.equal(target('src/bin/tool/main.rs', 'self::cli'), 'file:src/bin/tool/cli.rs', 'a directory binary owns its own directory');
+  assert.equal(target('src/bin/tool/main.rs', 'crate::cli::Args'), 'file:src/bin/tool/cli.rs');
+  assert.equal(target('tests/it.rs', 'self::common'), 'file:tests/common/mod.rs', 'an integration test owns tests/');
+  assert.equal(target('tests/it.rs', 'crate::common::setup'), 'file:tests/common/mod.rs');
+  assert.notEqual(target('examples/demo.rs', 'self::missing'), 'file:examples/demo.rs', 'a missing module is never a self-loop');
+  assert(!graph.edges.some((e) => e.type === 'imports' && e.source === e.target), 'no import edge points back at its own file');
+});
+
+test('aliased self and a leading :: keep their meaning', () => {
+  const graph = rustGraph('genesis-rust-alias-', {
+    'src/lib.rs': 'pub mod config;\nuse crate::{self as root};\nuse crate::config::{self as cfg, Settings};\nuse ::std::fmt;\nuse ::serde::Serialize;\nuse ::{core::mem, log::info};\n',
+    'src/config.rs': 'pub struct Settings;\n',
+  });
+  const target = (specifier) => graph.edges.find((e) => e.type === 'imports' && e.source === 'file:src/lib.rs' && e.specifier === specifier)?.target;
+  assert.equal(target('crate'), 'file:src/lib.rs', 'self as root names the crate itself');
+  assert.equal(target('crate::config'), 'file:src/config.rs', 'self as cfg names the group module');
+  assert(!graph.edges.some((e) => /::self$/.test(e.specifier ?? '')), 'self is never appended as a path segment');
+  assert.equal(target('std::fmt'), 'runtime:rust:std', 'a leading :: still reaches the standard library');
+  assert.equal(target('serde::Serialize'), 'package:crates:serde', 'a leading :: still names the external crate');
+  assert.equal(target('core::mem'), 'runtime:rust:core');
+  assert.equal(target('log::info'), 'package:crates:log');
+  assert(!graph.nodes.some((n) => n.id === 'package:crates:'), 'no empty crate name is ever recorded');
+});
+
+test('a use clause wrapped across lines is collected up to its own semicolon', () => {
+  const graph = rustGraph('genesis-rust-wrap-', {
+    'src/lib.rs': [
+      'pub mod net;',
+      'use crate::net::{',
+      '    tcp::{Socket, Listener}, // not; an import',
+      '    /* pool; */ pool::Pool,',
+      '};',
+      'use std::{',
+      '    fmt,',
+      '    io,',
+      '};',
+      'pub fn after() { let s = "use fake::Thing;"; }',
+      'pub struct Tail;',
+    ].join('\n') + '\n',
+    'src/net/mod.rs': 'pub mod tcp;\npub mod pool;\n',
+    'src/net/tcp.rs': 'pub struct Socket;\npub struct Listener;\n',
+    'src/net/pool.rs': 'pub struct Pool;\n',
+  });
+  const edges = graph.edges.filter((e) => e.type === 'imports' && e.source === 'file:src/lib.rs');
+  const target = (specifier) => edges.find((e) => e.specifier === specifier);
+  assert.equal(target('crate::net::tcp::Socket').target, 'file:src/net/tcp.rs', 'a wrapped nested group expands');
+  assert.equal(target('crate::net::tcp::Socket').line, 2, 'the edge points at the line the clause starts on');
+  assert.equal(target('crate::net::tcp::Listener').target, 'file:src/net/tcp.rs');
+  assert.equal(target('crate::net::pool::Pool').target, 'file:src/net/pool.rs', 'a semicolon in a block comment does not end the clause');
+  assert.equal(target('std::fmt').target, 'runtime:rust:std');
+  assert.equal(target('std::io').target, 'runtime:rust:std');
+  assert(!edges.some((e) => /not|fake/.test(e.specifier)), 'comments and string literals never become imports');
+  const names = graph.nodes.filter((n) => n.type === 'symbol' && n.path === 'src/lib.rs').map((n) => n.name).sort();
+  assert.deepEqual(names, ['Tail', 'after'], 'items after a wrapped clause are still claimed');
+});
+
 test('artifacts are published atomically and leave no staging files', () => {
   const root = fixture();
   execFileSync(process.execPath, [graphizer, root, '--write']);
