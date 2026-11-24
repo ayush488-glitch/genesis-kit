@@ -1001,6 +1001,7 @@ function commandTask(parsed, raw) {
     }
     saveState(repo, state, 'task.added', { id, outcome: task.outcome });
     console.log(`Added ${id}`);
+    if (risk !== 'low' && !task.scenarios.length) console.error(`genesis: note: ${id} is ${risk} risk and has no --scenario. Name the outcome a user would observe and the gate that proves it; otherwise a passing suite is the only evidence that it works.`);
     return;
   }
   const id = nested.options.id === true || !nested.options.id ? nested.positional[1] : nested.options.id;

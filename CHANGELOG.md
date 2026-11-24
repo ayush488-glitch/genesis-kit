@@ -2,6 +2,8 @@
 
 ## 2.4.0 — Unreleased
 
+- Note when a medium-risk or higher task is added without an outcome scenario, and say in the verify guide what a user-outcome gate and held-out cases look like. Tasks were being completed on a passing unit suite while the feature failed in real use. The note is advisory; nothing is blocked.
+
 - Add a continuation rule to the operating contract, the skill, the kickoff and the implement guide: keep going on authorized work, stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker, and look in the repository and attached tools before asking the human for a fact. Agents were handing back to ask whether to commit, continue to the next approved milestone, or for facts they later found themselves.
 - State where a build task ends: an opened pull request for the task branch, unless pushing is restricted. Merging, deploying and pushing to the default branch stay with the human. The contract previously ended at `task complete` and a checkpoint, and work accumulated as unpushed local commits.
 

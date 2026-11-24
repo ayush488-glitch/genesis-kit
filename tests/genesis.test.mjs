@@ -433,3 +433,14 @@ test('status rolls up what is done and left, and checkpoint prints a resume prom
   checkpoint = run(['checkpoint', repo]).stdout;
   assert.match(checkpoint, /Unpublished: branch \S+ is 1 commit ahead of its upstream/);
 });
+
+test('adding a risky task without an outcome scenario prints an advisory note', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  const scenario = JSON.stringify({ id: 'save', actor: 'signed-in user', scope: 'own items', environment: 'test', duration: 'one save', observable: 'item survives reload', gate: 'tests' });
+  assert.match(run(['task', 'add', repo, '--id', 'T-1', '--risk', 'medium', '--outcome', 'Save items', ...gate]).stderr, /T-1 is medium risk and has no --scenario/);
+  assert.equal(run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--outcome', 'Save items', ...gate, '--scenario', scenario]).stderr, '');
+  assert.equal(run(['task', 'add', repo, '--id', 'T-3', '--outcome', 'Rename a label', ...gate]).stderr, '');
+  assert.equal(state(repo).tasks.length, 3);
+});
