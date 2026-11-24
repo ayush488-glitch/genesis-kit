@@ -2,6 +2,19 @@
 
 ## 2.4.0 — Unreleased
 
+- Note when a medium-risk or higher task is added without an outcome scenario, and say in the verify guide what a user-outcome gate and held-out cases look like. Tasks were being completed on a passing unit suite while the feature failed in real use. The note is advisory; nothing is blocked.
+
+- Add a continuation rule to the operating contract, the skill, the kickoff and the implement guide: keep going on authorized work, stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker, and look in the repository and attached tools before asking the human for a fact. Agents were handing back to ask whether to commit, continue to the next approved milestone, or for facts they later found themselves.
+- State where a build task ends: an opened pull request for the task branch, unless pushing is restricted. Merging, deploying and pushing to the default branch stay with the human. The contract previously ended at `task complete` and a checkpoint, and work accumulated as unpushed local commits.
+
+- Make `genesis status` answer "what is left": it now prints task counts by state and the open tasks with their outcomes. The plain output previously named only the active task, so the question had to be answered from memory or by reading state.
+- Print a paste-ready resume prompt from `genesis checkpoint`, ending with an instruction to verify state before building rather than trust earlier completion claims.
+- Flag unpublished work at checkpoint: when the branch has never been pushed or is ahead of its upstream, say so. Nothing is pushed automatically.
+
+- List every flag `task add`, `task set` and `record` accept in `genesis help`, and print help for `--help` anywhere on the command line instead of parsing it as a value. Agents were reading `genesis.mjs` to discover `--scope`, `--depends` and `--scenario`.
+- Let a record supersede one of another type, so knowledge can replace the assumption it resolves. `--supersedes` previously searched only records of the same type and failed with "unknown superseded record", leaving the old assumption active.
+- Name the launcher fallback (`~/.local/bin/genesis`) in the kickoff and the agent instruction block. Agent shells often start without the installer's bin directory on `PATH`.
+- Stop telling agents to read `.genesis/project.json` before editing. `genesis.md` said to read it while the skill said not to load it wholesale; the file grows with every proof and record.
 - Stop starting unrelated backlog when a task completes. Completion previously activated the first queued task in creation order, so a repository with old queued tasks kept switching to one of them and had to be requeued after every completion. Completion now continues only into a task that declared the finished one in `--depends`; otherwise nothing is active and the next action lists the queued ids. Name the next task with `genesis task complete --next ID`, `genesis plan approve --next ID` or `genesis control resume ID`. `control resume` now works from the post-completion `verify` phase of a specification workflow, and `genesis run` continues only into a queued task that has its own current authorization.
 
 - Record the revision of the nested repository that owns a task's scope in gate proofs. A workspace whose root has no commits (for example, several repositories checked out side by side) previously recorded `revision.commit: null`, so evidence could not be tied to the commit it verified. Proofs now add `revision.repo` when the scope resolves to one nested repository; other layouts are unchanged.

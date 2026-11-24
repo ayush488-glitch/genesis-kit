@@ -6,7 +6,7 @@
 
 [![Tests](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-355C4B)](https://nodejs.org/)
-[![Version](https://img.shields.io/badge/version-2.3.0-4A6274)](package.json)
+[![Version](https://img.shields.io/badge/version-2.4.0-4A6274)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-665474)](LICENSE)
 
 [Quick start](#quick-start) · [Architecture](#architecture) · [Completion contract](#completion-contract) · [Experiments](#evaluated-learning) · [Documentation](#documentation)
@@ -253,6 +253,14 @@ My project goal is: "REPLACE THIS WITH WHAT I WANT TO BUILD."
 9. After interruption, inspect attempts and uncertain side effects before
    recovery or retry. Record durable discoveries and checkpoint before stopping.
    Treat learned rules as proposals until evaluation, review and promotion pass.
+
+10. Keep going on authorized work. Stop only for a Genesis gate, an action I
+   have not authorized that is irreversible, spends money or reaches outside
+   the repository, or a real blocker. Look in the repository, its
+   configuration and attached tools before asking me for a fact, and say what
+   you checked. End a build task at an opened pull request for its branch
+   unless I restrict pushing; never push to the default branch, merge or
+   deploy unasked. Say what was verified, what was only built and what is left.
 ```
 
 The installer supports skill discovery in Codex and Claude Code. Other shell-capable hosts can read the same Markdown/JSON contract and invoke the CLI; see [agent adapters](AGENT-ADAPTERS.md). The installer copies Genesis and a pinned MIT-licensed [Ponytail](https://github.com/DietrichGebert/ponytail) skill and creates a CLI symlink. It does not download runtime dependencies or modify shell startup files.
@@ -268,7 +276,7 @@ bash ~/.local/share/genesis-kit/install.sh
 ~/.local/bin/genesis help
 ```
 
-For a later coding session:
+For a later coding session, `genesis checkpoint .` prints a resume prompt filled in with the active task and next action, and says when the branch has work that was never pushed. The generic form is:
 
 ```text
 Resume this repository with Genesis and Ponytail full. Read .genesis/KICKOFF.md,
@@ -323,6 +331,8 @@ genesis control approve . T-1 --gate independent-review \
   --human reviewer --reason "Checked the diff and current evidence"
 genesis task complete . --id T-1
 genesis checkpoint .
+# What is done and what is left, from state.
+genesis status .
 ```
 
 Existing repositories start with `genesis adopt .` for a read-only discovery report. After approval, `genesis adopt . --write` creates the harness without reorganizing source code. `genesis migrate .` inspects legacy state; add `--write` to migrate while preserving legacy files.

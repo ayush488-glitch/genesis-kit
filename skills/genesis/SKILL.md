@@ -22,7 +22,7 @@ Load the official Ponytail skill at `full` before architecture or code changes. 
 - Ask the index: `genesis query <repo> search|scope|defines|callers|callees|impact|neighbours|path` (`--json` to parse). Expose the same questions to an MCP host with `genesis mcp <repo>`.
 - See the codebase: `genesis serve <repo> --open` draws it as a live map, reindexes on save and is read-only.
 
-If `genesis` is not on `PATH`, run `node <genesis-kit>/tools/genesis.mjs`.
+If `genesis` is not on `PATH`, run the installed launcher directly (`~/.local/bin/genesis`, or `$GENESIS_BIN_DIR/genesis`), or `node <genesis-kit>/tools/genesis.mjs`.
 
 ## Session contract
 
@@ -31,6 +31,8 @@ Before editing, report `state → evidence → blocker → next action`. Inspect
 Query the index before reading widely or grepping. `genesis query <repo> search NAME` finds where a name is defined; `scope PATH` gives a file or directory's dependencies in both directions; `callers`/`callees` give call edges; `impact PATH` gives everything that transitively imports a file, which is the blast radius to check before editing shared code; `path FROM TO` shows how two files connect. Search the repository before adding anything, and query it before searching.
 
 Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript and Python are extracted, so absence from the index is not evidence of absence in the repository.
+
+Keep going on authorized work. Stop only for a Genesis gate, an action the human has not authorized that is irreversible, spends money or reaches outside the repository, or a real blocker, conflicting requirement or uncertain side effect. Look in the repository, its configuration and attached tools before asking the human for a fact, and say what you checked. A build task ends at an opened pull request for its branch unless pushing is restricted; never push to the default branch, merge or deploy unasked. `genesis.md` has the full rule.
 
 Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specification, and planning, do not write product implementation code.
 

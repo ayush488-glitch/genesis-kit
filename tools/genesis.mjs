@@ -309,6 +309,20 @@ function scopeRevision(repo, scope = []) {
   return { ...gitInfo(top), repo: relative(root || repo, top).split(sep).join('/') };
 }
 
+// Work that exists only as local commits: null when published, when there is no remote, or outside git.
+function unpublished(repo) {
+  const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (!git(['remote'])) return null;
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    let ahead;
+    try { ahead = Number(git(['rev-list', '--count', '@{u}..HEAD'])); } catch { return `branch ${branch} has never been pushed`; }
+    return ahead ? `branch ${branch} is ${ahead} commit${ahead === 1 ? '' : 's'} ahead of its upstream` : null;
+  } catch {
+    return null;
+  }
+}
+
 function revision(repo) {
   return { ...gitInfo(repo), source_hash: contentHash(repo) };
 }
@@ -625,12 +639,14 @@ function renderKickoff(repo, state) {
     ] : []), '',
     '## Resume', '',
     'Load Genesis and official Ponytail full, then run `genesis brief .` for the current task contract, binding rules and phase guide.',
+    'If the shell reports `genesis: command not found`, run the installed launcher directly: `~/.local/bin/genesis` (or `$GENESIS_BIN_DIR/genesis`).',
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
     'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
     'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
+    'Keep going on authorized work: stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker. Look before asking the human for a fact. A build task ends at an opened pull request unless pushing is restricted.',
     'Reuse fresh gates with --reuse. Reconcile interrupted attempts before replaying commands. Report state → evidence → blocker → next action; checkpoint before stopping.', '',
   ];
   atomicWrite(join(genesisDir(repo), 'KICKOFF.md'), lines.join('\n'));
@@ -697,6 +713,13 @@ function commandStatus(parsed) {
     console.log(`active: ${state.lifecycle.active_task || 'none'}`);
     console.log(`blocker: ${state.lifecycle.blocker || 'none'}`);
     console.log(`next: ${state.lifecycle.next_action}`);
+    const tasks = state.tasks.filter((task) => !(state.workflow && task.id === 'SPEC-1'));
+    const counts = {};
+    for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
+    console.log(`tasks: ${Object.entries(counts).map(([name, count]) => `${count} ${name}`).join(', ') || 'none'}`);
+    const open = tasks.filter((task) => !['done', 'rejected'].includes(task.state));
+    for (const task of open.slice(0, 12)) console.log(`  ${task.id} [${task.state}] ${excerpt(task.outcome, 80)}`);
+    if (open.length > 12) console.log(`  +${open.length - 12} more; genesis status <repo> --json lists all`);
   }
 }
 
@@ -707,6 +730,13 @@ function commandCheckpoint(parsed) {
   saveState(repo, state, 'checkpoint', state.checkpoint);
   runGraphizer(repo);
   console.log(`Checkpointed ${state.project.name}`);
+  const local = unpublished(repo);
+  if (local) console.log(`Unpublished: ${local}. A local commit is not a handoff; push and open a pull request when that is authorized.`);
+  const active = state.tasks.find((task) => task.id === state.lifecycle.active_task);
+  console.log(['', 'Resume prompt (paste into a new session):',
+    `Continue ${state.project.name} in ${repo}. Read .genesis/KICKOFF.md, then run \`genesis brief .\`.`,
+    `Active task: ${active ? `${active.id} — ${active.outcome}` : 'none'}. Next action: ${state.lifecycle.next_action}`,
+    'Verify the current state yourself before building (git status, rerun the gates); do not rely on earlier completion claims.'].join('\n'));
 }
 
 function commandDashboard(parsed) {
@@ -899,7 +929,7 @@ function commandAgent(parsed, raw) {
   const block = `<!-- genesis:start -->
 ## Genesis workflow
 
-Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`. If the shell reports \`genesis: command not found\`, run the installed launcher directly: \`~/.local/bin/genesis\` (or \`$GENESIS_BIN_DIR/genesis\`).
 
 ### Ask the index before reading the code
 
@@ -984,6 +1014,7 @@ function commandTask(parsed, raw) {
     }
     saveState(repo, state, 'task.added', { id, outcome: task.outcome });
     console.log(`Added ${id}`);
+    if (risk !== 'low' && !task.scenarios.length) console.error(`genesis: note: ${id} is ${risk} risk and has no --scenario. Name the outcome a user would observe and the gate that proves it; otherwise a passing suite is the only evidence that it works.`);
     return;
   }
   const id = nested.options.id === true || !nested.options.id ? nested.positional[1] : nested.options.id;
@@ -1044,7 +1075,11 @@ function commandRecord(parsed, raw) {
   const record = state[key].at(-1); record.paths = values(nested.options.path); record.tags = values(nested.options.tag);
   for (const path of record.paths) safePath(repo, path);
   if (nested.options.supersedes) {
-    const previous = state[key].find(r => r.id === nested.options.supersedes && r.id !== id);
+    // Prefer a record of the same type; otherwise accept exactly one match among the other types.
+    const matches = list => list.filter(r => typeof r === 'object' && r.id === nested.options.supersedes && r.id !== id);
+    const same = matches(state[key]), other = same.length ? [] : matches(['knowledge', 'decisions', 'assumptions', 'invariants'].filter(k => k !== key).flatMap(k => state[k]));
+    if (other.length > 1) throw new Error('superseded record id matches more than one record type');
+    const previous = same[0] || other[0];
     if (!previous) throw new Error('unknown superseded record');
     previous.status = 'superseded'; previous.superseded_by = id; record.supersedes = previous.id;
   }
@@ -1629,8 +1664,12 @@ Usage:
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
-  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low] [--gate id:command]
+      any record: [--id ID] [--path PATH] [--tag TAG] [--supersedes RECORD-ID]; decision|assumption: [--status TEXT]
+  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low|medium|high|critical] [--owner NAME]
+      [--gate id:command] [--runtime id:command] [--runtime-max-age SECONDS] [--scenario JSON]
+      [--scope PATH] [--input PATH] [--env NAME] [--depends TASK-ID] [--next TEXT]   list flags repeat
   genesis task set|complete <repo> --id ID
+      set: [--state blocked|failed] [--next TEXT] [--blocker TEXT] [--note TEXT] [--failure TEXT] [--limitation TEXT]
   genesis gate <repo> [task-id]
   genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
   genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
@@ -1650,7 +1689,7 @@ Usage:
 
 async function main(raw) {
   const command = raw[0];
-  if (!command || command === 'help' || command === '--help') return printHelp();
+  if (!command || command === 'help' || raw.includes('--help')) return printHelp();
   const parsed = parseArgs(raw.slice(1));
   if (command === 'gate') return commandGate(parsed);
   if (command === 'run') return commandRun(parsed);
