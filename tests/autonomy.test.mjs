@@ -233,3 +233,29 @@ test('context fingerprints include selected environment and full attempts are re
   run(['gate', p]); const attempt = state(p).attempts[0];
   assert.equal(JSON.parse(run(['context', p, '--id', attempt.id, '--type', 'attempts']).stdout).status, 'passed');
 });
+
+test('completion does not start unrelated backlog; the caller names what runs next', t => {
+  const p = fixture(t); add(p, gate);
+  run(['task', 'add', p, '--id', 'T-old', '--outcome', 'Old backlog item', ...gate]);
+  run(['task', 'add', p, '--id', 'T-new', '--outcome', 'What the human asked for', ...gate]);
+  run(['gate', p]); run(['task', 'complete', p, '--id', 'T-1', '--next', 'T-missing'], false);
+  assert.equal(state(p).tasks[0].state, 'active');
+  run(['task', 'complete', p, '--id', 'T-1']);
+  assert.equal(state(p).lifecycle.active_task, null);
+  assert.deepEqual(state(p).tasks.slice(1).map(x => x.state), ['queued', 'queued']);
+  assert.match(state(p).lifecycle.next_action, /control resume .*T-old, T-new/);
+  run(['control', 'resume', p, 'T-new', '--human', 'owner']);
+  run(['gate', p]); run(['task', 'complete', p, '--id', 'T-new', '--next', 'T-old']);
+  assert.equal(state(p).lifecycle.active_task, 'T-old');
+});
+
+test('the runner continues only into a queued task that carries its own authorization', t => {
+  const p = fixture(t); add(p, [...gate, '--scope', 'app.txt', '--scenario', scenario]);
+  run(['task', 'add', p, '--id', 'T-2', '--outcome', 'Unauthorized backlog', ...gate, '--scope', 'app.txt', '--scenario', scenario]);
+  run(['task', 'add', p, '--id', 'T-3', '--outcome', 'Authorized follow-up', ...gate, '--scope', 'app.txt', '--scenario', scenario]);
+  const grant = (id, task) => run(['authorize', 'grant', p, '--id', id, '--task', task, '--command', 'node -e "0"', '--human', 'owner', '--reason', 'fixture', '--expires', new Date(Date.now() + 60000).toISOString()]);
+  grant('A-1', 'T-1'); grant('A-3', 'T-3');
+  run(['run', p, '--max-tasks', '3']);
+  assert.deepEqual(state(p).tasks.map(x => x.state), ['done', 'queued', 'done']);
+  assert.equal(state(p).lifecycle.active_task, null);
+});
