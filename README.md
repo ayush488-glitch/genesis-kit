@@ -24,10 +24,10 @@ Genesis runs locally on **Node.js 18+ with no npm dependencies**. Coding hosts s
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/genesis-architecture.png" alt="Genesis architecture: human-approved discovery, specification and planning lead to authorized execution, verification and checkpointing. Durable repository state supplies context, recovery and generated views. A separate baseline/candidate evaluation loop requires human review before promoting learned rules." width="1100">
+  <img src="docs/assets/genesis-architecture.png" alt="Genesis architecture: human-approved discovery, specification and planning lead to authorized execution that continues to the next gate, verification, and a handoff as a pull request or a recorded blocker. Durable repository state supplies context, recovery and generated views including status and a resume prompt. A separate baseline/candidate evaluation loop requires human review before promoting learned rules." width="1100">
 </p>
 
-<p align="center"><em>Figure 1. The development lifecycle and evaluated-learning loop share durable state; task completion and rule promotion have separate evidence requirements.</em><br>
+<p align="center"><em>Figure 1. The development lifecycle and evaluated-learning loop share durable state; task completion and rule promotion have separate evidence requirements. A build task ends at a pull request the human merges.</em><br>
 <a href="docs/assets/genesis-architecture.tex">LaTeX / TikZ source</a> · <a href="docs/assets/genesis-architecture.pdf">Vector PDF</a> · <a href="docs/assets/README.md">Reproduce the figure</a></p>
 
 | Layer | Responsibility | Durable output |

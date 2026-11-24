@@ -12,14 +12,14 @@
  note/.style={font=\rmfamily\scriptsize,fill=white,inner sep=1pt}
 ]
 \node[draw,fill=black!5,minimum width=16.5cm,minimum height=.5cm,font=\fontsize{9}{11}\selectfont] (human) at (8.125,7.8)
- {\textbf{Human decisions}\quad Objective\; $\mid$\; specification / plan approval\; $\mid$\; authorization\; $\mid$\; independent review};
+ {\textbf{Human decisions}\quad Objective\; $\mid$\; specification / plan approval\; $\mid$\; authorization\; $\mid$\; independent review\; $\mid$\; merge};
 \foreach \x/\id/\title/\detail in {
 1.25/discover/Discover/Goals and constraints,
 4/spec/Specify/Requirements and acceptance,
 6.75/plan/Plan/Scope and dependencies,
-9.5/work/Execute/Authorized worker,
-12.25/proof/Verify/Gates and runtime receipts,
-15/checkpoint/Checkpoint/Complete or retain blocker}
+9.5/work/Execute/{Authorized, to the next gate},
+12.25/proof/Verify/{Gates, runtime receipts, review},
+15/checkpoint/Hand off/Pull request or blocker}
  \node[box] (\id) at (\x,6.65) {\textbf{\title}\\[2pt]\fontsize{8}{10}\selectfont \detail};
 \foreach \a/\b in {discover/spec,spec/plan,plan/work,work/proof,proof/checkpoint}
  \draw[flow] (\a) -- (\b);
@@ -36,11 +36,11 @@
 \node[box,text width=4.65cm,minimum height=1.05cm] (recovery) at (8.125,3.25)
  {\textbf{Execution / recovery}\\[2pt]\fontsize{8}{10}\selectfont Scope / time limits; pause / revocation;\\interrupted-attempt reconciliation};
 \node[box,text width=4.65cm,minimum height=1.05cm] (views) at (13.75,3.25)
- {\textbf{Generated views}\\[2pt]\fontsize{8}{10}\selectfont KICKOFF; PLAN; control panel;\\code graph; redacted local traces};
+ {\textbf{Generated views}\\[2pt]\fontsize{8}{10}\selectfont KICKOFF; PLAN; status;\\resume prompt; control panel;\\code graph; redacted local traces};
 \foreach \n in {context,recovery,views}
  \draw[flow] (state.south -| \n.north) -- (\n.north);
 \draw[feedback] (context.west) -- (-.36,3.25) -- (-.36,5.8) -| (work.south);
-\node[note] at (4.05,5.8) {task-scoped continuation};
+\node[note] at (4.05,5.8) {task-scoped continuation; next task named or dependent};
 \node[anchor=west,font=\small\bfseries] at (-.12,2.05) {Evaluated learning};
 \node[box,text width=3.25cm,minimum height=1.05cm] (proposal) at (1.75,.94)
  {\textbf{Propose}\\[2pt]\fontsize{8}{10}\selectfont Rule hypothesis;\\rollback reference};
@@ -54,6 +54,6 @@
  \draw[flow] (\a) -- (\b);
 \draw[feedback] (promote.east) -- (16.7,.94) -- (16.7,5.15) -- (state.east);
 \node[font=\scriptsize,anchor=north,align=center,text width=16.5cm] at (8.125,.05)
- {\textbf{Trust boundary:} host-enforced filesystem, network and credential permissions. Working directories are not sandboxes; review attribution is not authentication.};
+ {\textbf{Trust boundary:} host-enforced filesystem, network and credential permissions. Working directories are not sandboxes; human or model review attribution is not authentication.};
 \end{tikzpicture}
 \end{document}
