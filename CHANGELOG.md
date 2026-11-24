@@ -2,6 +2,10 @@
 
 ## 2.4.0 — Unreleased
 
+- Make `genesis status` answer "what is left": it now prints task counts by state and the open tasks with their outcomes. The plain output previously named only the active task, so the question had to be answered from memory or by reading state.
+- Print a paste-ready resume prompt from `genesis checkpoint`, ending with an instruction to verify state before building rather than trust earlier completion claims.
+- Flag unpublished work at checkpoint: when the branch has never been pushed or is ahead of its upstream, say so. Nothing is pushed automatically.
+
 - List every flag `task add`, `task set` and `record` accept in `genesis help`, and print help for `--help` anywhere on the command line instead of parsing it as a value. Agents were reading `genesis.mjs` to discover `--scope`, `--depends` and `--scenario`.
 - Let a record supersede one of another type, so knowledge can replace the assumption it resolves. `--supersedes` previously searched only records of the same type and failed with "unknown superseded record", leaving the old assumption active.
 - Name the launcher fallback (`~/.local/bin/genesis`) in the kickoff and the agent instruction block. Agent shells often start without the installer's bin directory on `PATH`.

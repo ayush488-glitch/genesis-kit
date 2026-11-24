@@ -298,6 +298,20 @@ function scopeRevision(repo, scope = []) {
   return { ...gitInfo(top), repo: relative(root || repo, top).split(sep).join('/') };
 }
 
+// Work that exists only as local commits: null when published, when there is no remote, or outside git.
+function unpublished(repo) {
+  const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (!git(['remote'])) return null;
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    let ahead;
+    try { ahead = Number(git(['rev-list', '--count', '@{u}..HEAD'])); } catch { return `branch ${branch} has never been pushed`; }
+    return ahead ? `branch ${branch} is ${ahead} commit${ahead === 1 ? '' : 's'} ahead of its upstream` : null;
+  } catch {
+    return null;
+  }
+}
+
 function revision(repo) {
   return { ...gitInfo(repo), source_hash: contentHash(repo) };
 }
@@ -687,6 +701,13 @@ function commandStatus(parsed) {
     console.log(`active: ${state.lifecycle.active_task || 'none'}`);
     console.log(`blocker: ${state.lifecycle.blocker || 'none'}`);
     console.log(`next: ${state.lifecycle.next_action}`);
+    const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1');
+    const counts = {};
+    for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
+    console.log(`tasks: ${Object.entries(counts).map(([name, count]) => `${count} ${name}`).join(', ') || 'none'}`);
+    const open = tasks.filter((task) => !['done', 'rejected'].includes(task.state));
+    for (const task of open.slice(0, 12)) console.log(`  ${task.id} [${task.state}] ${excerpt(task.outcome, 80)}`);
+    if (open.length > 12) console.log(`  +${open.length - 12} more; genesis status <repo> --json lists all`);
   }
 }
 
@@ -697,6 +718,13 @@ function commandCheckpoint(parsed) {
   saveState(repo, state, 'checkpoint', state.checkpoint);
   runGraphizer(repo);
   console.log(`Checkpointed ${state.project.name}`);
+  const local = unpublished(repo);
+  if (local) console.log(`Unpublished: ${local}. A local commit is not a handoff; push and open a pull request when that is authorized.`);
+  const active = state.tasks.find((task) => task.id === state.lifecycle.active_task);
+  console.log(['', 'Resume prompt (paste into a new session):',
+    `Continue ${state.project.name} in ${repo}. Read .genesis/KICKOFF.md, then run \`genesis brief .\`.`,
+    `Active task: ${active ? `${active.id} — ${active.outcome}` : 'none'}. Next action: ${state.lifecycle.next_action}`,
+    'Verify the current state yourself before building (git status, rerun the gates); do not rely on earlier completion claims.'].join('\n'));
 }
 
 function commandDashboard(parsed) {

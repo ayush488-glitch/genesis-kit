@@ -403,3 +403,31 @@ test('a record can supersede one of another type, and kickoff names the launcher
   assert.equal(project.assumptions[0].superseded_by, 'K-1');
   assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /command not found.*~\/\.local\/bin\/genesis/);
 });
+
+test('status rolls up what is done and left, and checkpoint prints a resume prompt and flags unpublished work', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  run(['task', 'add', repo, '--id', 'T-1', '--outcome', 'First slice', ...gate]);
+  run(['task', 'add', repo, '--id', 'T-2', '--outcome', 'Second slice', ...gate]);
+  run(['gate', repo, 'T-1']);
+  run(['task', 'complete', repo, '--id', 'T-1']);
+  const status = run(['status', repo]).stdout;
+  assert.match(status, /tasks: .*1 done/);
+  assert.match(status, /T-2 \[(queued|active)\] Second slice/);
+  assert.doesNotMatch(status, /T-1 \[/);
+
+  let checkpoint = run(['checkpoint', repo]).stdout;
+  assert.match(checkpoint, /Resume prompt[\s\S]*Read \.genesis\/KICKOFF\.md[\s\S]*Next action: [\s\S]*do not rely on earlier completion claims/);
+  assert.doesNotMatch(checkpoint, /Unpublished/);
+
+  const remote = mkdtempSync(join(tmpdir(), 'genesis-remote-'));
+  execFileSync('git', ['init', '-q', '--bare'], { cwd: remote });
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  assert.match(run(['checkpoint', repo]).stdout, /Unpublished: branch \S+ has never been pushed/);
+  execFileSync('git', ['push', '-q', '-u', 'origin', 'HEAD'], { cwd: repo });
+  assert.doesNotMatch(run(['checkpoint', repo]).stdout, /Unpublished/);
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'local only'], { cwd: repo });
+  checkpoint = run(['checkpoint', repo]).stdout;
+  assert.match(checkpoint, /Unpublished: branch \S+ is 1 commit ahead of its upstream/);
+});
