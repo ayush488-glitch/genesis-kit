@@ -246,16 +246,27 @@ function activate(repo, state, task) {
   state.lifecycle = { phase: 'build', status: 'active', active_task: task.id, blocker: null, next_action: task.next_action };
 }
 
-function completeTask(repo, state, task) {
+// --next is absent (undefined) or names one task; a bare --next is a mistake, not a request for the default.
+function nextOption(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('--next requires one task id');
+  return value;
+}
+
+function completeTask(repo, state, task, nextId = null) {
   requireBuild(repo, state, task);
+  const chosen = nextId ? state.tasks.find(t => t.id === nextId && t.state === 'queued') : null;
+  if (nextId && !chosen) throw new Error(`--next must name a queued task: ${nextId}`);
   if (!task.gates.some(g => g.command && g.mandatory)) throw new Error('implementation tasks require a mandatory executable gate');
   const pending = task.gates.filter(g => g.mandatory && proofStatus(repo, state, task, g) !== 'pass');
   if (pending.length) throw new Error(`cannot complete ${task.id}; ${pending.map(g => `${g.id}:${proofStatus(repo, state, task, g)}`).join(', ')}`);
   if (task.risk !== 'low' && !task.gates.some(g => g.id === 'independent-review' && !g.command && proofStatus(repo, state, task, g) === 'pass')) throw new Error('independent review is required');
   checkScope(repo, task);
   task.state = 'done'; task.updated_at = now();
-  state.lifecycle = { phase: 'verify', status: 'ready', active_task: null, blocker: null, next_action: 'Review completed work and choose the next bounded outcome.' };
-  const next = state.tasks.find(t => t.state === 'queued' && readyTask(state, t));
+  const queued = state.tasks.filter(t => t.state === 'queued' && readyTask(state, t));
+  state.lifecycle = { phase: 'verify', status: 'ready', active_task: null, blocker: null, next_action: queued.length ? `Choose the next task with genesis control resume <repo> ID. Queued: ${queued.slice(0, 5).map(t => t.id).join(', ')}${queued.length > 5 ? `, +${queued.length - 5} more` : ''}.` : 'Review completed work and choose the next bounded outcome.' };
+  // Continue only into work that was waiting on this task, or the task the caller named.
+  const next = chosen || queued.find(t => (t.dependencies || []).includes(task.id));
   if (next) activate(repo, state, next);
 }
 
@@ -894,7 +905,9 @@ function commandPlan(parsed, raw) {
     if (result.problems.length) throw new Error(`plan is incomplete; ${result.problems.join(', ')}`);
     if (state.workflow.plan_check?.source_hash !== hash) throw new Error('run plan check against the current tasks before approval');
     state.workflow.plan_approval = { human, reason: nested.options.reason || null, at: now(), source_hash: hash };
-    const first = result.tasks.find((task) => task.state === 'queued' && readyTask(state, task));
+    const named = nextOption(nested.options.next);
+    const first = result.tasks.find((task) => task.state === 'queued' && readyTask(state, task) && (!named || task.id === named));
+    if (named && !first) throw new Error(`--next must name a queued task whose dependencies are complete: ${named}`);
     if (first) { first.state = 'active'; first.base_manifest = inputManifest(repo, first.inputs); }
     state.lifecycle = { phase: 'build', status: first ? 'active' : 'ready', active_task: first?.id || null, blocker: null, next_action: first?.next_action || 'Add the next approved implementation task.' };
     saveState(repo, state, 'plan.approved', { human, source_hash: hash });
@@ -1029,7 +1042,7 @@ function commandTask(parsed, raw) {
     return;
   }
   if (action === 'complete') {
-    completeTask(repo, state, task);
+    completeTask(repo, state, task, nextOption(nested.options.next));
     saveState(repo, state, 'task.completed', { id });
     console.log(`Completed ${id}`);
     return;
@@ -1233,7 +1246,7 @@ function commandControl(parsed, raw) {
       task.state = 'paused';
     } else if (['resume', 'retry', 'requeue'].includes(action)) {
       if (runningAttempt(state)) throw new Error('wait for the running attempt to stop or reconcile with recover');
-      if (state.workflow && (specStatus(repo, state).status !== 'approved' || planStatus(repo, state).status !== 'approved' || state.lifecycle.phase !== 'build')) throw new Error('current specification and plan approval required');
+      if (state.workflow && (specStatus(repo, state).status !== 'approved' || planStatus(repo, state).status !== 'approved' || !['build', 'verify'].includes(state.lifecycle.phase))) throw new Error('current specification and plan approval required');
       if (action === 'requeue') { task.state = 'queued'; if (state.lifecycle.active_task === id) state.lifecycle.active_task = null; }
       else activate(repo, state, task);
     } else if (action === 'reject') { task.state = 'rejected'; if (state.lifecycle.active_task === id) state.lifecycle.active_task = null; }
@@ -1284,7 +1297,16 @@ async function commandRun(parsed) {
   const deadline = Date.now() + positive(parsed.options.timeout || 600000, 'timeout');
   for (let count = 0; count < limit; count++) {
     let state = loadState(repo), task = state.tasks.find(t => t.id === state.lifecycle.active_task);
-    if (!task) { console.log('No active task'); return; }
+    if (!task) {
+      const picked = withLock(repo, () => {
+        const latest = loadState(repo);
+        const next = latest.tasks.find(t => t.state === 'queued' && readyTask(latest, t) && latest.authorizations.some(a => validAuthorization(latest, t, a.id)));
+        if (next) { activate(repo, latest, next); requireBuild(repo, latest, next); saveState(repo, latest, 'run.activated-task', { task: next.id }); }
+        return next?.id;
+      });
+      if (!picked) { console.log('No active task'); return; }
+      state = loadState(repo); task = state.tasks.find(t => t.id === picked);
+    }
     requireBuild(repo, state, task);
     const grant = state.authorizations.find(a => validAuthorization(state, task, a.id));
     if (!grant) throw new Error(`${task.id} needs a current task-scoped command authorization`);
@@ -1631,7 +1653,7 @@ Usage:
   genesis spec start|status|check <repo>
   genesis spec approve <repo> --human NAME --reason TEXT
   genesis plan status|check <repo>
-  genesis plan approve <repo> --human NAME --reason TEXT
+  genesis plan approve <repo> --human NAME --reason TEXT [--next TASK-ID]
   genesis plan reopen <repo> --human NAME --reason TEXT
   genesis agent connect <repo> [--codex] [--claude] [--write]
   genesis status|checkpoint|dashboard|cleanup <repo>
@@ -1651,6 +1673,7 @@ Usage:
   genesis gate <repo> [task-id]
   genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
   genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
+  genesis task complete <repo> --id ID --next TASK-ID   finish one task and start the one you name
   genesis learn propose|evaluate|review|approve|rollback <repo> ...
   genesis context|next <repo> [task-id] [--bytes 8000] [--id RECORD] [--full] [--stats] [--since HASH]
   genesis brief <repo> [task-id] [--stage research|plan|implement|verify|recover]

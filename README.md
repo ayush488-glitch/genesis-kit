@@ -244,7 +244,9 @@ My project goal is: "REPLACE THIS WITH WHAT I WANT TO BUILD."
 
 8. Continue only authorized active work. Run current gates; obtain independent
    review for non-low-risk tasks. Use `genesis task complete`, never a state
-   edit, to complete work. If I authorize a bounded host command, record a
+   edit, to complete work. Completion starts only a task that depended on
+   the finished one; name any other next task with `--next ID` or
+   `genesis control resume . ID` instead of working an old queued item. If I authorize a bounded host command, record a
    task-scoped, expiring grant and use `genesis run`. Reuse valid authorization
    and proof across sessions. Never invent a reviewer or approval.
 

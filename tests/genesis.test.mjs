@@ -269,6 +269,34 @@ Clinic staff.
   assert.equal(state(repo).lifecycle.phase, 'planning');
 });
 
+test('plan approval starts the task the approver names, and work can continue after a completion', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--workflow', 'new-product', '--objective', 'Build a clinic scheduler']);
+  writeFileSync(join(repo, 'SPEC.md'), ['# Product specification', '## Problem', 'Scheduling.', '## Users', 'Staff.',
+    '## Functional requirements', '- FR-1: Create appointments.', '## Non-functional requirements', '- NFR-1: Tenant isolation.',
+    '## Constraints', '- Node.js 18+.', '## Non-goals', '- Self-service.', '## Acceptance criteria', '- AC-1: A test creates an appointment.',
+    '## Risks', '- Tenant boundaries.', '## Open questions', '- None.', ''].join('\n'));
+  run(['spec', 'check', repo]);
+  run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'reviewed']);
+  const requirements = ['--requirement', 'FR-1', '--requirement', 'NFR-1', '--requirement', 'AC-1'];
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  run(['task', 'add', repo, '--id', 'T-old', '--outcome', 'Older backlog item', ...requirements, ...gate]);
+  run(['task', 'add', repo, '--id', 'T-new', '--outcome', 'What the human asked for', ...requirements, ...gate]);
+  run(['plan', 'check', repo]);
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed', '--next', 'T-missing'], { ok: false });
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed', '--next', 'T-new']);
+  assert.equal(state(repo).lifecycle.active_task, 'T-new');
+  run(['gate', repo, 'T-new']);
+  run(['task', 'complete', repo, '--id', 'T-new']);
+  let project = state(repo);
+  assert.equal(project.lifecycle.active_task, null);
+  assert.equal(project.tasks.find((task) => task.id === 'T-old').state, 'queued');
+  run(['control', 'resume', repo, 'T-old', '--human', 'owner']);
+  project = state(repo);
+  assert.equal(project.lifecycle.phase, 'build');
+  assert.equal(project.lifecycle.active_task, 'T-old');
+});
+
 test('specification changes stale approval and agent connection preserves repository instructions', () => {
   const repo = tempRepo();
   run(['init', repo, '--workflow', 'new-product', '--objective', 'Build one thing']);
