@@ -14,7 +14,7 @@ This release implements the implementation and session-review recommendations ap
 
 ## Boundaries
 
-Local attribution records do not authenticate a human. Host permissions enforce credentials, network and filesystem isolation; a working directory or worktree is not a sandbox. Repository policy cannot protect against an actor that can rewrite both the verifier and its data. The evaluator must be controlled outside the candidate for adversarial optimization.
+Local attribution records do not authenticate a human, and `--reviewer` does not authenticate a reviewing session: both are attribution. A recorded model review is accepted only on a medium-risk task whose contract declares `--review model`, which in a specification workflow is part of the plan a human approves. Host permissions enforce credentials, network and filesystem isolation; a working directory or worktree is not a sandbox. Repository policy cannot protect against an actor that can rewrite both the verifier and its data. The evaluator must be controlled outside the candidate for adversarial optimization.
 
 No graph database, hosted dashboard, automatic production deployment, automatic global-policy promotion or unmeasured model routing is included. Runtime and outcome checks remain domain-specific commands supplied by the project. There is no promise of exactly-once external effects or a benchmark improvement percentage.
 

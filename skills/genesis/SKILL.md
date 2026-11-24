@@ -59,6 +59,14 @@ Non-low-risk tasks automatically receive an `independent-review` gate. A separat
 genesis control approve <repo> <task-id> --gate independent-review --human <name> --reason "..."
 ```
 
+A medium-risk task added with `--review model` may instead be cleared by a review from a separate session that did not build it:
+
+```bash
+genesis control approve <repo> <task-id> --gate independent-review --reviewer <reviewing-session-id> --scope "what was reviewed" --reason "..." [--open "unresolved finding"]
+```
+
+The receipt is bound to the current source, configuration and executable proof exactly like a human review, so it goes stale when any of them change. The session that built the work never records its own review. In a specification workflow the review mode is part of the plan the human approves; do not add it afterwards. High and critical risk always need a human.
+
 Checkpoint before handing off:
 
 ```bash

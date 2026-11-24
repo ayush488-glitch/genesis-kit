@@ -187,7 +187,7 @@ function environment(task = {}) {
 function taskConfig(state, task) {
   return digest({ policy: state.policy, spec: state.workflow?.spec_check?.source_hash,
     plan: state.workflow?.plan_approval?.source_hash, id: task.id, risk: task.risk,
-    outcome: task.outcome, owner: task.owner, scope: task.scope, inputs: task.inputs, environment: task.environment, dependencies: task.dependencies,
+    outcome: task.outcome, owner: task.owner, review: task.review, scope: task.scope, inputs: task.inputs, environment: task.environment, dependencies: task.dependencies,
     scenarios: task.scenarios, gates: task.gates.map(({ id, command, mandatory, kind, max_age }) => ({ id, command, mandatory, kind, max_age })) });
 }
 
@@ -205,7 +205,11 @@ function proofStatus(repo, state, task, gate) {
     if (gate.command) {
       if (proof.command !== gate.command || proof.exit_code !== 0 || proof.failure || proof.before_hash !== proof.source_hash) return 'invalid';
       if (digest(proof.environment) !== digest(environment(task))) return 'stale';
-    } else if (!proof.human || !proof.reason || proof.human === task.owner) return 'invalid';
+    } else {
+      // A recorded model review counts only where the task contract allows it; otherwise a human is required.
+      const who = proof.human || (task.review === 'model' && task.risk === 'medium' ? proof.reviewer : null);
+      if (!who || !proof.reason || who === task.owner) return 'invalid';
+    }
     if (gate.max_age && (!Number.isFinite(Date.parse(proof.observed_at)) || Date.now() - Date.parse(proof.observed_at) > gate.max_age * 1000)) return 'stale';
     if (gate.kind === 'review' && proof.reviewed_proofs !== digest(task.gates.filter(g => g.command).map(g => g.evidence?.hash))) return 'stale';
     return 'pass';
@@ -582,7 +586,7 @@ function planProblems(repo, state) {
 
 function planHash(state) {
   const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1').map((task) => ({
-    id: task.id, outcome: task.outcome, risk: task.risk, scope: task.scope,
+    id: task.id, outcome: task.outcome, risk: task.risk, review: task.review, scope: task.scope,
     dependencies: task.dependencies, scenarios: task.scenarios, inputs: task.inputs, environment: task.environment, requirements: task.requirements || [], gates: task.gates.map((gate) => ({ id: gate.id, command: gate.command, mandatory: gate.mandatory, kind: gate.kind, max_age: gate.max_age })),
   }));
   return createHash('sha256').update(JSON.stringify(tasks)).digest('hex');
@@ -610,7 +614,7 @@ function renderPlan(repo, state) {
     `- workflow: ${state.workflow.type}`, `- phase: ${state.lifecycle.phase}`, `- plan approval: ${state.workflow.plan_approval ? `${state.workflow.plan_approval.human} at ${state.workflow.plan_approval.at}` : 'pending'}`, '',
     '## Tasks', '',
     ...(tasks.length ? tasks.flatMap((task) => [
-      `### ${task.id} — ${task.outcome}`, '', `- state/risk: ${task.state} / ${task.risk}`,
+      `### ${task.id} — ${task.outcome}`, '', `- state/risk: ${task.state} / ${task.risk}${task.review === 'model' ? ' (independent review may be a recorded model review)' : ''}`,
       `- requirements: ${task.requirements?.join(', ') || 'none'}`, `- scope: ${task.scope.join(', ') || 'not bounded'}`,
       `- gates: ${task.gates.map((gate) => `${gate.id}: ${gate.command || gate.status}`).join(', ') || 'none'}`, `- next: ${task.next_action}`, '',
     ]) : ['- No implementation tasks yet.', '']),
@@ -981,6 +985,9 @@ function commandTask(parsed, raw) {
       const unknown = requirements.filter((item) => !known.has(item));
       if (unknown.length) throw new Error(`unknown requirement: ${unknown.join(', ')}`);
     }
+    const review = nested.options.review === true || !nested.options.review ? null : nested.options.review;
+    if (review && review !== 'model') throw new Error('--review accepts only: model');
+    if (review && risk !== 'medium') throw new Error('--review model applies only to medium-risk tasks; low risk needs no review and higher risk needs a human');
     const gates = values(nested.options.gate).map(parseGate);
     gates.push(...values(nested.options.runtime).map(value => ({ ...parseGate(value), kind: 'runtime', max_age: positive(nested.options['runtime-max-age'] || 300, 'runtime-max-age') })));
     if (new Set(gates.map(g => g.id)).size !== gates.length) throw new Error('duplicate gate id');
@@ -990,7 +997,7 @@ function commandTask(parsed, raw) {
     const task = {
       id,
       outcome: nested.options.outcome === true || !nested.options.outcome ? 'Define the task outcome.' : nested.options.outcome,
-      state: 'queued', risk, owner: nested.options.owner || null,
+      state: 'queued', risk, owner: nested.options.owner || null, ...(review ? { review } : {}),
       scope: values(nested.options.scope), dependencies: values(nested.options.depends), requirements,
       inputs: values(nested.options.input), environment: values(nested.options.env), scenarios: values(nested.options.scenario).map(value => JSON.parse(value)),
       gates,
@@ -1229,14 +1236,22 @@ function commandControl(parsed, raw) {
   const record = { id: randomUUID(), at: now(), action, task: id, human: nested.options.human || null, reason: nested.options.reason || null, revision: nested.options.revision || null };
   if (action === 'approve') {
     requireBuild(repo, state, task);
-    requireText(record.human, '--human'); requireText(record.reason, '--reason');
+    const reviewer = nested.options.reviewer || null;
+    if (reviewer) {
+      if (record.human) throw new Error('record a review with --human or --reviewer, not both');
+      if (task.review !== 'model') throw new Error(`${id} requires human review; only a task added with --review model accepts a recorded model review`);
+      record.reviewer = requireText(reviewer, '--reviewer');
+      record.scope = requireText(nested.options.scope, '--scope');
+      record.open = values(nested.options.open).filter(item => item !== true);
+    } else requireText(record.human, '--human');
+    requireText(record.reason, '--reason');
     const gate = task.gates.find(g => g.id === nested.options.gate);
     if (!gate || gate.command) throw new Error('approve requires a manual review gate; executable gates must be run');
-    if (record.human === task.owner) throw new Error('task owner cannot approve independent review');
+    if ((record.human || record.reviewer) === task.owner) throw new Error('task owner cannot approve independent review');
     if (!task.gates.some(g => g.command) || task.gates.some(g => g.command && g.mandatory && proofStatus(repo, state, task, g) !== 'pass')) throw new Error('run current executable proof before review');
     gate.kind = 'review'; gate.status = 'pass';
     gate.evidence = saveProof(repo, { task: id, gate: gate.id, kind: 'review', attempt: record.id,
-      human: record.human, reason: record.reason, observed_at: record.at,
+      ...(reviewer ? { reviewer: record.reviewer, scope: record.scope, open: record.open } : { human: record.human }), reason: record.reason, observed_at: record.at,
       source_hash: digest(inputManifest(repo, task.inputs)), config_hash: taskConfig(state, task),
       reviewed_proofs: digest(task.gates.filter(g => g.command).map(g => g.evidence?.hash)) });
   } else {
@@ -1671,10 +1686,12 @@ Usage:
   genesis task set|complete <repo> --id ID
       set: [--state blocked|failed] [--next TEXT] [--blocker TEXT] [--note TEXT] [--failure TEXT] [--limitation TEXT]
   genesis gate <repo> [task-id]
-  genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
+  genesis control approve <repo> [task-id] --gate ID --human NAME --reason TEXT
+      or, for a task added with --review model: --reviewer ID --scope TEXT --reason TEXT [--open FINDING]
   genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
   genesis task complete <repo> --id ID --next TASK-ID   finish one task and start the one you name
   genesis learn propose|evaluate|review|approve|rollback <repo> ...
+  genesis task add ... --risk medium --review model   let a recorded model review clear this task's independent-review gate
   genesis context|next <repo> [task-id] [--bytes 8000] [--id RECORD] [--full] [--stats] [--since HASH]
   genesis brief <repo> [task-id] [--stage research|plan|implement|verify|recover]
   genesis authorize grant <repo> --id ID --task ID --command CMD --human NAME --reason TEXT --expires ISO
