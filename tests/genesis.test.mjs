@@ -398,6 +398,12 @@ test('a record can supersede one of another type, and kickoff names the launcher
   run(['record', 'assumption', repo, '--id', 'A-1', '--text', 'the adapter is optional']);
   run(['record', 'knowledge', repo, '--id', 'K-1', '--title', 'Adapter', '--text', 'the adapter is required', '--supersedes', 'A-1']);
   run(['record', 'knowledge', repo, '--id', 'K-2', '--title', 'Other', '--text', 'x', '--supersedes', 'missing'], { ok: false });
+  run(['record', 'assumption', repo, '--id', 'X', '--text', 'same id, assumption']);
+  run(['record', 'decision', repo, '--id', 'X', '--title', 'Same id', '--text', 'decision']);
+  run(['record', 'knowledge', repo, '--id', 'K-3', '--title', 'Ambiguous', '--text', 'x', '--supersedes', 'X'], { ok: false });
+  run(['record', 'assumption', repo, '--id', 'A-2', '--text', 'replaces the assumption', '--supersedes', 'X']);
+  assert.equal(state(repo).decisions.find((record) => record.id === 'X').status, 'accepted');
+  assert.equal(state(repo).assumptions.find((record) => record.id === 'X').status, 'superseded');
   const project = state(repo);
   assert.equal(project.assumptions[0].status, 'superseded');
   assert.equal(project.assumptions[0].superseded_by, 'K-1');
@@ -418,6 +424,8 @@ test('status rolls up what is done and left, and checkpoint prints a resume prom
   assert.match(status, /tasks: .*1 done/);
   assert.match(status, /T-2 \[(queued|active)\] Second slice/);
   assert.doesNotMatch(status, /T-1 \[/);
+  run(['task', 'add', repo, '--id', 'SPEC-1', '--outcome', 'An ordinary task with this name', ...gate]);
+  assert.match(run(['status', repo]).stdout, /SPEC-1 \[(queued|active)\] An ordinary task/);
 
   let checkpoint = run(['checkpoint', repo]).stdout;
   assert.match(checkpoint, /Resume prompt[\s\S]*Read \.genesis\/KICKOFF\.md[\s\S]*Next action: [\s\S]*do not rely on earlier completion claims/);

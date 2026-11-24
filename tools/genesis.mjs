@@ -702,7 +702,7 @@ function commandStatus(parsed) {
     console.log(`active: ${state.lifecycle.active_task || 'none'}`);
     console.log(`blocker: ${state.lifecycle.blocker || 'none'}`);
     console.log(`next: ${state.lifecycle.next_action}`);
-    const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1');
+    const tasks = state.tasks.filter((task) => !(state.workflow && task.id === 'SPEC-1'));
     const counts = {};
     for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
     console.log(`tasks: ${Object.entries(counts).map(([name, count]) => `${count} ${name}`).join(', ') || 'none'}`);
@@ -1062,7 +1062,11 @@ function commandRecord(parsed, raw) {
   const record = state[key].at(-1); record.paths = values(nested.options.path); record.tags = values(nested.options.tag);
   for (const path of record.paths) safePath(repo, path);
   if (nested.options.supersedes) {
-    const previous = ['knowledge', 'decisions', 'assumptions', 'invariants'].flatMap(k => state[k]).find(r => typeof r === 'object' && r.id === nested.options.supersedes && r.id !== id);
+    // Prefer a record of the same type; otherwise accept exactly one match among the other types.
+    const matches = list => list.filter(r => typeof r === 'object' && r.id === nested.options.supersedes && r.id !== id);
+    const same = matches(state[key]), other = same.length ? [] : matches(['knowledge', 'decisions', 'assumptions', 'invariants'].filter(k => k !== key).flatMap(k => state[k]));
+    if (other.length > 1) throw new Error('superseded record id matches more than one record type');
+    const previous = same[0] || other[0];
     if (!previous) throw new Error('unknown superseded record');
     previous.status = 'superseded'; previous.superseded_by = id; record.supersedes = previous.id;
   }
