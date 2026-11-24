@@ -517,3 +517,17 @@ test('adding a risky task without an outcome scenario prints an advisory note', 
   assert.equal(run(['task', 'add', repo, '--id', 'T-3', '--outcome', 'Rename a label', ...gate]).stderr, '');
   assert.equal(state(repo).tasks.length, 3);
 });
+
+test('a papercut records the friction an agent worked around and can be listed', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['trace', repo, '--event', 'papercut'], { ok: false });
+  run(['trace', repo, '--event', 'papercut', '--message', 'tried task add --help; expected usage; got an error; fix: print help. token=abc123']);
+  run(['trace', repo, '--event', 'tool.error', '--message', 'unrelated']);
+  const listed = run(['trace', repo, '--list', 'papercut']).stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(listed.length, 1);
+  assert.match(listed[0].data.message, /tried task add --help; expected usage/);
+  assert.doesNotMatch(listed[0].data.message, /abc123/);
+  assert.ok(run(['trace', repo, '--list']).stdout.trim().split('\n').length >= 2);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /--event papercut/);
+});

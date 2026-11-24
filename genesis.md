@@ -54,3 +54,11 @@ A handback says what was verified, what was only built, and what is left. If a g
 Run relevant gates, record blockers honestly, and run `genesis checkpoint <repo>`. The generated kickoff must identify completed work, current work, evidence, blocker, and one exact next action.
 
 Agents may propose learned rules and stale-code cleanup. Only a human may promote a learned rule; cleanup is never silently applied.
+
+## Papercuts
+
+When a command, a documented flag or an instruction does not behave as documented, record it before working around it:
+
+`genesis trace <repo> --event papercut --message "tried ...; expected ...; got ...; fix ..."`
+
+A workaround that only you know about costs the next session the same turns. Papercuts are local, redacted traces; they change no state and approve nothing. The owner reads them with `genesis trace <repo> --list papercut`.
