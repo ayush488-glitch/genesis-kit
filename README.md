@@ -290,7 +290,7 @@ $$
 \mathrm{RequiredReview}(t).
 $$
 
-Here $G_t$ is the set of mandatory gates, including at least one executable gate. Workflow approval is required for specification-first projects. Scope is enforced when declared and is required for autonomous execution. Independent human review is required above low risk.
+Here $G_t$ is the set of mandatory gates, including at least one executable gate. Workflow approval is required for specification-first projects. Scope is enforced when declared and is required for autonomous execution. Independent review is required above low risk. It is a human review by default; a medium-risk task added with `--review model` may instead be cleared by a recorded review from a separate session that did not build it (`genesis control approve --reviewer ID --scope TEXT --reason TEXT`), bound to the same source, configuration and proof. High and critical risk always need a human.
 
 Fresh executable proof binds the check to source inputs, task configuration and selected environment values. It retains command, attempt identity, timestamps, exit status and an integrity hash. A source-mutating check cannot certify its own result. New executable evidence invalidates review of an older attempt. Runtime gates additionally produce structured identity receipts with a freshness limit.
 
