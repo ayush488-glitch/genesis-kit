@@ -43,9 +43,9 @@ Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specifica
 5. After approval, record it with `genesis spec approve <repo> --human NAME --reason "..."`.
 6. Create bounded tasks using approved `--requirement` identifiers and at least one executable `--gate` per task.
 7. Run `genesis plan check <repo>`, show generated `.genesis/PLAN.md`, and stop for explicit human approval.
-8. Record approval with `genesis plan approve <repo> --human NAME --reason "..."`, then implement only the activated task.
+8. Record approval with `genesis plan approve <repo> --human NAME --reason "..."`, then implement only the activated task. Add `--next TASK-ID` when the task to start is not the first queued one.
 
-Create one bounded task. Every mandatory check must pass against the current source hash; pending, skipped, failed, missing, and stale proof block completion. Medium risk and above requires independent review.
+Create one bounded task. Completing a task starts only a task that was waiting on it through `--depends`; other queued work stays queued until you name it with `genesis task complete <repo> --id ID --next NEXT` or `genesis control resume <repo> NEXT`. Every mandatory check must pass against the current source hash; pending, skipped, failed, missing, and stale proof block completion. Medium risk and above requires independent review.
 
 Use `genesis record knowledge|decision|assumption|invariant` for durable context and provenance. Do not leave a binding decision or discovered constraint only in chat.
 

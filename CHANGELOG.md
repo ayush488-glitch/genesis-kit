@@ -2,6 +2,8 @@
 
 ## 2.4.0 — Unreleased
 
+- Stop starting unrelated backlog when a task completes. Completion previously activated the first queued task in creation order, so a repository with old queued tasks kept switching to one of them and had to be requeued after every completion. Completion now continues only into a task that declared the finished one in `--depends`; otherwise nothing is active and the next action lists the queued ids. Name the next task with `genesis task complete --next ID`, `genesis plan approve --next ID` or `genesis control resume ID`. `control resume` now works from the post-completion `verify` phase of a specification workflow, and `genesis run` continues only into a queued task that has its own current authorization.
+
 - Record the revision of the nested repository that owns a task's scope in gate proofs. A workspace whose root has no commits (for example, several repositories checked out side by side) previously recorded `revision.commit: null`, so evidence could not be tied to the commit it verified. Proofs now add `revision.repo` when the scope resolves to one nested repository; other layouts are unchanged.
 
 Review follow-ups (#13-#20):
