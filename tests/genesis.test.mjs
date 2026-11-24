@@ -117,6 +117,43 @@ test('medium-risk tasks require independent human-reviewed evidence', () => {
   run(['task', 'complete', repo, '--id', 'T-2']);
 });
 
+test('a medium-risk task can opt into a recorded model review; everything else still needs a human', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  const approve = (task, ...rest) => ['control', 'approve', repo, task, '--gate', 'independent-review', ...rest];
+  run(['task', 'add', repo, '--id', 'T-high', '--risk', 'high', '--review', 'model', '--outcome', 'Too risky', ...gate], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-low', '--review', 'model', '--outcome', 'Needs no review', ...gate], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-bad', '--risk', 'medium', '--review', 'bot', '--outcome', 'Unknown mode', ...gate], { ok: false });
+
+  run(['task', 'add', repo, '--id', 'T-1', '--risk', 'medium', '--owner', 'builder', '--outcome', 'Human-reviewed work', ...gate]);
+  run(['gate', repo, 'T-1']);
+  run(approve('T-1', '--reviewer', 'review-session', '--scope', 'full diff', '--reason', 'no findings'), { ok: false });
+  run(approve('T-1', '--human', 'reviewer', '--reason', 'diff and proof checked'));
+  run(['task', 'complete', repo, '--id', 'T-1']);
+
+  run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--owner', 'builder', '--review', 'model', '--outcome', 'Model-reviewed work', ...gate]);
+  run(['gate', repo, 'T-2']);
+  run(approve('T-2', '--reviewer', 'builder', '--scope', 'full diff', '--reason', 'self-review'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--reason', 'no scope given'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--human', 'someone', '--scope', 'full diff', '--reason', 'both'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'diff of src and tests', '--open', 'copy not reviewed', '--reason', 'no blocking findings'));
+  const evidence = state(repo).tasks.find((task) => task.id === 'T-2').gates.find((item) => item.id === 'independent-review').evidence;
+  const proof = JSON.parse(readFileSync(join(repo, evidence.path), 'utf8'));
+  assert.equal(proof.reviewer, 'review-session');
+  assert.equal(proof.scope, 'diff of src and tests');
+  assert.deepEqual(proof.open, ['copy not reviewed']);
+  assert.equal(proof.human, undefined);
+
+  writeFileSync(join(repo, 'README.md'), '# Changed after review\n');
+  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
+  run(['gate', repo, 'T-2']);
+  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'full diff again', '--reason', 'rechecked'));
+  run(['task', 'complete', repo, '--id', 'T-2']);
+  assert.equal(state(repo).tasks.find((task) => task.id === 'T-2').state, 'done');
+});
+
 test('pause blocks task work until an explicit control resume', () => {
   const repo = tempRepo();
   run(['init', repo]);
@@ -374,41 +411,4 @@ test('context carries scope cards and a symptom map resolved against the index',
   assert.equal(symbol.line, 2);
   // Advisory, not authority: these are hints from static analysis, and say so.
   for (const entry of [...packet.scope_cards, ...packet.symptoms]) assert.equal(entry.advisory, true);
-});
-
-test('a medium-risk task can opt into a recorded model review; everything else still needs a human', () => {
-  const repo = tempRepo();
-  run(['init', repo]);
-  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
-  const approve = (task, ...rest) => ['control', 'approve', repo, task, '--gate', 'independent-review', ...rest];
-  run(['task', 'add', repo, '--id', 'T-high', '--risk', 'high', '--review', 'model', '--outcome', 'Too risky', ...gate], { ok: false });
-  run(['task', 'add', repo, '--id', 'T-low', '--review', 'model', '--outcome', 'Needs no review', ...gate], { ok: false });
-  run(['task', 'add', repo, '--id', 'T-bad', '--risk', 'medium', '--review', 'bot', '--outcome', 'Unknown mode', ...gate], { ok: false });
-
-  run(['task', 'add', repo, '--id', 'T-1', '--risk', 'medium', '--owner', 'builder', '--outcome', 'Human-reviewed work', ...gate]);
-  run(['gate', repo, 'T-1']);
-  run(approve('T-1', '--reviewer', 'review-session', '--scope', 'full diff', '--reason', 'no findings'), { ok: false });
-  run(approve('T-1', '--human', 'reviewer', '--reason', 'diff and proof checked'));
-  run(['task', 'complete', repo, '--id', 'T-1']);
-
-  run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--owner', 'builder', '--review', 'model', '--outcome', 'Model-reviewed work', ...gate]);
-  run(['gate', repo, 'T-2']);
-  run(approve('T-2', '--reviewer', 'builder', '--scope', 'full diff', '--reason', 'self-review'), { ok: false });
-  run(approve('T-2', '--reviewer', 'review-session', '--reason', 'no scope given'), { ok: false });
-  run(approve('T-2', '--reviewer', 'review-session', '--human', 'someone', '--scope', 'full diff', '--reason', 'both'), { ok: false });
-  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'diff of src and tests', '--open', 'copy not reviewed', '--reason', 'no blocking findings'));
-  const evidence = state(repo).tasks.find((task) => task.id === 'T-2').gates.find((item) => item.id === 'independent-review').evidence;
-  const proof = JSON.parse(readFileSync(join(repo, evidence.path), 'utf8'));
-  assert.equal(proof.reviewer, 'review-session');
-  assert.equal(proof.scope, 'diff of src and tests');
-  assert.deepEqual(proof.open, ['copy not reviewed']);
-  assert.equal(proof.human, undefined);
-
-  writeFileSync(join(repo, 'README.md'), '# Changed after review\n');
-  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
-  run(['gate', repo, 'T-2']);
-  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
-  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'full diff again', '--reason', 'rechecked'));
-  run(['task', 'complete', repo, '--id', 'T-2']);
-  assert.equal(state(repo).tasks.find((task) => task.id === 'T-2').state, 'done');
 });
