@@ -366,6 +366,8 @@ CI runs syntax checks and the suite on Node 18 and 22. An optional [development 
 
 For capability experiments, compare the same host and model with a fixed task set, matched budgets and an independently protected evaluator. Report paired completion outcomes, regressions, interventions, recovery behavior, elapsed time and actual cost. Preserve failed runs and use held-out tasks after candidate selection.
 
+To see what agents and people actually did, `node tools/session-audit.mjs` reads local Claude Code and Codex transcripts and prints one row per session: human turns, interruptions, refused tool calls, tool calls and errors, Genesis commands run, approvals the agent recorded itself, papercuts filed, whether it checkpointed, and linked pull requests. Use `--since`, `--project` and `--json` to narrow or export it. The output carries counts and identifiers only, never prompt text or tool output. Human turns per opened pull request, measured before and after a harness change on the same tasks, is the number to watch; a count alone does not say why a person stepped in.
+
 The [architecture figure](docs/assets/README.md) is reproducible from committed LaTeX/TikZ source. Building documentation assets requires Tectonic and Poppler; running Genesis does not.
 
 ## Related work
