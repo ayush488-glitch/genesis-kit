@@ -239,7 +239,9 @@ test('completion does not start unrelated backlog; the caller names what runs ne
   run(['task', 'add', p, '--id', 'T-old', '--outcome', 'Old backlog item', ...gate]);
   run(['task', 'add', p, '--id', 'T-new', '--outcome', 'What the human asked for', ...gate]);
   run(['gate', p]); run(['task', 'complete', p, '--id', 'T-1', '--next', 'T-missing'], false);
+  run(['task', 'complete', p, '--id', 'T-1', '--next'], false);
   assert.equal(state(p).tasks[0].state, 'active');
+  editState(p, s => { delete s.tasks[1].dependencies; });
   run(['task', 'complete', p, '--id', 'T-1']);
   assert.equal(state(p).lifecycle.active_task, null);
   assert.deepEqual(state(p).tasks.slice(1).map(x => x.state), ['queued', 'queued']);

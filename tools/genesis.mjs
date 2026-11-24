@@ -246,6 +246,13 @@ function activate(repo, state, task) {
   state.lifecycle = { phase: 'build', status: 'active', active_task: task.id, blocker: null, next_action: task.next_action };
 }
 
+// --next is absent (undefined) or names one task; a bare --next is a mistake, not a request for the default.
+function nextOption(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('--next requires one task id');
+  return value;
+}
+
 function completeTask(repo, state, task, nextId = null) {
   requireBuild(repo, state, task);
   const chosen = nextId ? state.tasks.find(t => t.id === nextId && t.state === 'queued') : null;
@@ -259,7 +266,7 @@ function completeTask(repo, state, task, nextId = null) {
   const queued = state.tasks.filter(t => t.state === 'queued' && readyTask(state, t));
   state.lifecycle = { phase: 'verify', status: 'ready', active_task: null, blocker: null, next_action: queued.length ? `Choose the next task with genesis control resume <repo> ID. Queued: ${queued.slice(0, 5).map(t => t.id).join(', ')}${queued.length > 5 ? `, +${queued.length - 5} more` : ''}.` : 'Review completed work and choose the next bounded outcome.' };
   // Continue only into work that was waiting on this task, or the task the caller named.
-  const next = chosen || queued.find(t => t.dependencies.includes(task.id));
+  const next = chosen || queued.find(t => (t.dependencies || []).includes(task.id));
   if (next) activate(repo, state, next);
 }
 
@@ -868,7 +875,7 @@ function commandPlan(parsed, raw) {
     if (result.problems.length) throw new Error(`plan is incomplete; ${result.problems.join(', ')}`);
     if (state.workflow.plan_check?.source_hash !== hash) throw new Error('run plan check against the current tasks before approval');
     state.workflow.plan_approval = { human, reason: nested.options.reason || null, at: now(), source_hash: hash };
-    const named = nested.options.next && nested.options.next !== true ? nested.options.next : null;
+    const named = nextOption(nested.options.next);
     const first = result.tasks.find((task) => task.state === 'queued' && readyTask(state, task) && (!named || task.id === named));
     if (named && !first) throw new Error(`--next must name a queued task whose dependencies are complete: ${named}`);
     if (first) { first.state = 'active'; first.base_manifest = inputManifest(repo, first.inputs); }
@@ -1004,7 +1011,7 @@ function commandTask(parsed, raw) {
     return;
   }
   if (action === 'complete') {
-    completeTask(repo, state, task, nested.options.next && nested.options.next !== true ? nested.options.next : null);
+    completeTask(repo, state, task, nextOption(nested.options.next));
     saveState(repo, state, 'task.completed', { id });
     console.log(`Completed ${id}`);
     return;
@@ -1259,7 +1266,7 @@ async function commandRun(parsed) {
       const picked = withLock(repo, () => {
         const latest = loadState(repo);
         const next = latest.tasks.find(t => t.state === 'queued' && readyTask(latest, t) && latest.authorizations.some(a => validAuthorization(latest, t, a.id)));
-        if (next) { activate(repo, latest, next); saveState(repo, latest, 'run.activated-task', { task: next.id }); }
+        if (next) { activate(repo, latest, next); requireBuild(repo, latest, next); saveState(repo, latest, 'run.activated-task', { task: next.id }); }
         return next?.id;
       });
       if (!picked) { console.log('No active task'); return; }
