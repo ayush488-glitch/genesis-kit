@@ -28,7 +28,7 @@ Projects use only the phases they need. The first implementation is the complete
 4. `genesis spec approve . --human NAME --reason "..."` binds human approval to the current specification hash and moves to planning.
 5. Planning tasks reference approved requirement IDs through `--requirement` and name executable gates.
 6. `genesis plan check .` fails closed on missing, unknown, or unproved requirements.
-7. `genesis plan approve . --human NAME` activates the first task and moves to build.
+7. `genesis plan approve . --human NAME` activates the first queued task, or the one named with `--next ID`, and moves to build. Completing a task afterwards continues only into a task that declared it in `--depends`; other queued tasks wait until they are named.
 8. Existing gate, review, completion, control, trace, dashboard, graph, and checkpoint behavior continues unchanged.
 
 ## Assumptions
