@@ -2,6 +2,11 @@
 
 ## 2.4.0 — Unreleased
 
+- List every flag `task add`, `task set` and `record` accept in `genesis help`, and print help for `--help` anywhere on the command line instead of parsing it as a value. Agents were reading `genesis.mjs` to discover `--scope`, `--depends` and `--scenario`.
+- Let a record supersede one of another type, so knowledge can replace the assumption it resolves. `--supersedes` previously searched only records of the same type and failed with "unknown superseded record", leaving the old assumption active.
+- Name the launcher fallback (`~/.local/bin/genesis`) in the kickoff and the agent instruction block. Agent shells often start without the installer's bin directory on `PATH`.
+- Stop telling agents to read `.genesis/project.json` before editing. `genesis.md` said to read it while the skill said not to load it wholesale; the file grows with every proof and record.
+
 - Record the revision of the nested repository that owns a task's scope in gate proofs. A workspace whose root has no commits (for example, several repositories checked out side by side) previously recorded `revision.commit: null`, so evidence could not be tied to the commit it verified. Proofs now add `revision.repo` when the scope resolves to one nested repository; other layouts are unchanged.
 
 Review follow-ups (#13-#20):

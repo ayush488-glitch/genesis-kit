@@ -16,7 +16,7 @@ For a new product, discovery, specification, and planning are code-free phases. 
 ## Before editing
 
 1. Load the official Ponytail skill at `full`.
-2. Read `.genesis/KICKOFF.md` and `.genesis/project.json`.
+2. Read `.genesis/KICKOFF.md`, then run `genesis brief <repo>`. Do not load `.genesis/project.json` wholesale; it grows with every proof and record.
 3. Inspect only the active task's decisions, proof, and the code it touches. Ask the index rather than grepping: `genesis query <repo> search|scope|callers|impact|path`.
 4. Verify the configured baseline and current git state.
 5. State: `current state → evidence → blocker → next action`.

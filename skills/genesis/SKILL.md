@@ -22,7 +22,7 @@ Load the official Ponytail skill at `full` before architecture or code changes. 
 - Ask the index: `genesis query <repo> search|scope|defines|callers|callees|impact|neighbours|path` (`--json` to parse). Expose the same questions to an MCP host with `genesis mcp <repo>`.
 - See the codebase: `genesis serve <repo> --open` draws it as a live map, reindexes on save and is read-only.
 
-If `genesis` is not on `PATH`, run `node <genesis-kit>/tools/genesis.mjs`.
+If `genesis` is not on `PATH`, run the installed launcher directly (`~/.local/bin/genesis`, or `$GENESIS_BIN_DIR/genesis`), or `node <genesis-kit>/tools/genesis.mjs`.
 
 ## Session contract
 

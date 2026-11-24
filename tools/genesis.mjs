@@ -614,6 +614,7 @@ function renderKickoff(repo, state) {
     ] : []), '',
     '## Resume', '',
     'Load Genesis and official Ponytail full, then run `genesis brief .` for the current task contract, binding rules and phase guide.',
+    'If the shell reports `genesis: command not found`, run the installed launcher directly: `~/.local/bin/genesis` (or `$GENESIS_BIN_DIR/genesis`).',
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
     'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
     'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
@@ -886,7 +887,7 @@ function commandAgent(parsed, raw) {
   const block = `<!-- genesis:start -->
 ## Genesis workflow
 
-Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`. If the shell reports \`genesis: command not found\`, run the installed launcher directly: \`~/.local/bin/genesis\` (or \`$GENESIS_BIN_DIR/genesis\`).
 
 ### Ask the index before reading the code
 
@@ -1031,7 +1032,7 @@ function commandRecord(parsed, raw) {
   const record = state[key].at(-1); record.paths = values(nested.options.path); record.tags = values(nested.options.tag);
   for (const path of record.paths) safePath(repo, path);
   if (nested.options.supersedes) {
-    const previous = state[key].find(r => r.id === nested.options.supersedes && r.id !== id);
+    const previous = ['knowledge', 'decisions', 'assumptions', 'invariants'].flatMap(k => state[k]).find(r => typeof r === 'object' && r.id === nested.options.supersedes && r.id !== id);
     if (!previous) throw new Error('unknown superseded record');
     previous.status = 'superseded'; previous.superseded_by = id; record.supersedes = previous.id;
   }
@@ -1607,8 +1608,12 @@ Usage:
   genesis trace <repo> --event NAME [--task ID] [--message TEXT]
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
-  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low] [--gate id:command]
+      any record: [--id ID] [--path PATH] [--tag TAG] [--supersedes RECORD-ID]; decision|assumption: [--status TEXT]
+  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low|medium|high|critical] [--owner NAME]
+      [--gate id:command] [--runtime id:command] [--runtime-max-age SECONDS] [--scenario JSON]
+      [--scope PATH] [--input PATH] [--env NAME] [--depends TASK-ID] [--next TEXT]   list flags repeat
   genesis task set|complete <repo> --id ID
+      set: [--state blocked|failed] [--next TEXT] [--blocker TEXT] [--note TEXT] [--failure TEXT] [--limitation TEXT]
   genesis gate <repo> [task-id]
   genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
   genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
@@ -1627,7 +1632,7 @@ Usage:
 
 async function main(raw) {
   const command = raw[0];
-  if (!command || command === 'help' || command === '--help') return printHelp();
+  if (!command || command === 'help' || raw.includes('--help')) return printHelp();
   const parsed = parseArgs(raw.slice(1));
   if (command === 'gate') return commandGate(parsed);
   if (command === 'run') return commandRun(parsed);

@@ -375,3 +375,31 @@ test('context carries scope cards and a symptom map resolved against the index',
   // Advisory, not authority: these are hints from static analysis, and say so.
   for (const entry of [...packet.scope_cards, ...packet.symptoms]) assert.equal(entry.advisory, true);
 });
+
+test('help names every flag the task and record commands read, and --help never runs a command', () => {
+  const source = readFileSync(cli, 'utf8');
+  const help = run(['help']).stdout;
+  for (const name of ['commandTask', 'commandRecord']) {
+    const body = source.slice(source.indexOf(`function ${name}(`)).split('\nfunction ')[0];
+    const flags = new Set([...body.matchAll(/nested\.options(?:\.([a-z]+)|\['([a-z-]+)'\])/g)].map((match) => match[1] || match[2]));
+    assert.ok(flags.size > 5, `${name} flags were not found`);
+    for (const flag of flags) assert.match(help, new RegExp(`--${flag}\\b`), `help omits --${flag} read by ${name}`);
+  }
+  const repo = tempRepo();
+  run(['init', repo]);
+  assert.match(run(['task', 'add', repo, '--help']).stdout, /Usage:/);
+  assert.match(run(['record', '--help']).stdout, /Usage:/);
+  assert.equal(state(repo).tasks.length, 0);
+});
+
+test('a record can supersede one of another type, and kickoff names the launcher fallback', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['record', 'assumption', repo, '--id', 'A-1', '--text', 'the adapter is optional']);
+  run(['record', 'knowledge', repo, '--id', 'K-1', '--title', 'Adapter', '--text', 'the adapter is required', '--supersedes', 'A-1']);
+  run(['record', 'knowledge', repo, '--id', 'K-2', '--title', 'Other', '--text', 'x', '--supersedes', 'missing'], { ok: false });
+  const project = state(repo);
+  assert.equal(project.assumptions[0].status, 'superseded');
+  assert.equal(project.assumptions[0].superseded_by, 'K-1');
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /command not found.*~\/\.local\/bin\/genesis/);
+});
