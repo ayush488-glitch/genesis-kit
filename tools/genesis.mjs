@@ -187,7 +187,7 @@ function environment(task = {}) {
 function taskConfig(state, task) {
   return digest({ policy: state.policy, spec: state.workflow?.spec_check?.source_hash,
     plan: state.workflow?.plan_approval?.source_hash, id: task.id, risk: task.risk,
-    outcome: task.outcome, owner: task.owner, scope: task.scope, inputs: task.inputs, environment: task.environment, dependencies: task.dependencies,
+    outcome: task.outcome, owner: task.owner, review: task.review, scope: task.scope, inputs: task.inputs, environment: task.environment, dependencies: task.dependencies,
     scenarios: task.scenarios, gates: task.gates.map(({ id, command, mandatory, kind, max_age }) => ({ id, command, mandatory, kind, max_age })) });
 }
 
@@ -205,7 +205,11 @@ function proofStatus(repo, state, task, gate) {
     if (gate.command) {
       if (proof.command !== gate.command || proof.exit_code !== 0 || proof.failure || proof.before_hash !== proof.source_hash) return 'invalid';
       if (digest(proof.environment) !== digest(environment(task))) return 'stale';
-    } else if (!proof.human || !proof.reason || proof.human === task.owner) return 'invalid';
+    } else {
+      // A recorded model review counts only where the task contract allows it; otherwise a human is required.
+      const who = proof.human || (task.review === 'model' && task.risk === 'medium' ? proof.reviewer : null);
+      if (!who || !proof.reason || who === task.owner) return 'invalid';
+    }
     if (gate.max_age && (!Number.isFinite(Date.parse(proof.observed_at)) || Date.now() - Date.parse(proof.observed_at) > gate.max_age * 1000)) return 'stale';
     if (gate.kind === 'review' && proof.reviewed_proofs !== digest(task.gates.filter(g => g.command).map(g => g.evidence?.hash))) return 'stale';
     return 'pass';
@@ -246,16 +250,27 @@ function activate(repo, state, task) {
   state.lifecycle = { phase: 'build', status: 'active', active_task: task.id, blocker: null, next_action: task.next_action };
 }
 
-function completeTask(repo, state, task) {
+// --next is absent (undefined) or names one task; a bare --next is a mistake, not a request for the default.
+function nextOption(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('--next requires one task id');
+  return value;
+}
+
+function completeTask(repo, state, task, nextId = null) {
   requireBuild(repo, state, task);
+  const chosen = nextId ? state.tasks.find(t => t.id === nextId && t.state === 'queued') : null;
+  if (nextId && !chosen) throw new Error(`--next must name a queued task: ${nextId}`);
   if (!task.gates.some(g => g.command && g.mandatory)) throw new Error('implementation tasks require a mandatory executable gate');
   const pending = task.gates.filter(g => g.mandatory && proofStatus(repo, state, task, g) !== 'pass');
   if (pending.length) throw new Error(`cannot complete ${task.id}; ${pending.map(g => `${g.id}:${proofStatus(repo, state, task, g)}`).join(', ')}`);
   if (task.risk !== 'low' && !task.gates.some(g => g.id === 'independent-review' && !g.command && proofStatus(repo, state, task, g) === 'pass')) throw new Error('independent review is required');
   checkScope(repo, task);
   task.state = 'done'; task.updated_at = now();
-  state.lifecycle = { phase: 'verify', status: 'ready', active_task: null, blocker: null, next_action: 'Review completed work and choose the next bounded outcome.' };
-  const next = state.tasks.find(t => t.state === 'queued' && readyTask(state, t));
+  const queued = state.tasks.filter(t => t.state === 'queued' && readyTask(state, t));
+  state.lifecycle = { phase: 'verify', status: 'ready', active_task: null, blocker: null, next_action: queued.length ? `Choose the next task with genesis control resume <repo> ID. Queued: ${queued.slice(0, 5).map(t => t.id).join(', ')}${queued.length > 5 ? `, +${queued.length - 5} more` : ''}.` : 'Review completed work and choose the next bounded outcome.' };
+  // Continue only into work that was waiting on this task, or the task the caller named.
+  const next = chosen || queued.find(t => (t.dependencies || []).includes(task.id));
   if (next) activate(repo, state, next);
 }
 
@@ -296,6 +311,20 @@ function scopeRevision(repo, scope = []) {
   const [top] = tops;
   if (tops.size !== 1 || !top || top === root) return gitInfo(repo);
   return { ...gitInfo(top), repo: relative(root || repo, top).split(sep).join('/') };
+}
+
+// Work that exists only as local commits: null when published, when there is no remote, or outside git.
+function unpublished(repo) {
+  const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (!git(['remote'])) return null;
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    let ahead;
+    try { ahead = Number(git(['rev-list', '--count', '@{u}..HEAD'])); } catch { return `branch ${branch} has never been pushed`; }
+    return ahead ? `branch ${branch} is ${ahead} commit${ahead === 1 ? '' : 's'} ahead of its upstream` : null;
+  } catch {
+    return null;
+  }
 }
 
 function revision(repo) {
@@ -557,7 +586,7 @@ function planProblems(repo, state) {
 
 function planHash(state) {
   const tasks = state.tasks.filter((task) => task.id !== 'SPEC-1').map((task) => ({
-    id: task.id, outcome: task.outcome, risk: task.risk, scope: task.scope,
+    id: task.id, outcome: task.outcome, risk: task.risk, review: task.review, scope: task.scope,
     dependencies: task.dependencies, scenarios: task.scenarios, inputs: task.inputs, environment: task.environment, requirements: task.requirements || [], gates: task.gates.map((gate) => ({ id: gate.id, command: gate.command, mandatory: gate.mandatory, kind: gate.kind, max_age: gate.max_age })),
   }));
   return createHash('sha256').update(JSON.stringify(tasks)).digest('hex');
@@ -585,7 +614,7 @@ function renderPlan(repo, state) {
     `- workflow: ${state.workflow.type}`, `- phase: ${state.lifecycle.phase}`, `- plan approval: ${state.workflow.plan_approval ? `${state.workflow.plan_approval.human} at ${state.workflow.plan_approval.at}` : 'pending'}`, '',
     '## Tasks', '',
     ...(tasks.length ? tasks.flatMap((task) => [
-      `### ${task.id} — ${task.outcome}`, '', `- state/risk: ${task.state} / ${task.risk}`,
+      `### ${task.id} — ${task.outcome}`, '', `- state/risk: ${task.state} / ${task.risk}${task.review === 'model' ? ' (independent review may be a recorded model review)' : ''}`,
       `- requirements: ${task.requirements?.join(', ') || 'none'}`, `- scope: ${task.scope.join(', ') || 'not bounded'}`,
       `- gates: ${task.gates.map((gate) => `${gate.id}: ${gate.command || gate.status}`).join(', ') || 'none'}`, `- next: ${task.next_action}`, '',
     ]) : ['- No implementation tasks yet.', '']),
@@ -614,6 +643,7 @@ function renderKickoff(repo, state) {
     ] : []), '',
     '## Resume', '',
     'Load Genesis and official Ponytail full, then run `genesis brief .` for the current task contract, binding rules and phase guide.',
+    'If the shell reports `genesis: command not found`, run the installed launcher directly: `~/.local/bin/genesis` (or `$GENESIS_BIN_DIR/genesis`).',
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
     'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
     'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
@@ -621,6 +651,7 @@ function renderKickoff(repo, state) {
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
+    'Keep going on authorized work: stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker. Look before asking the human for a fact. A build task ends at an opened pull request unless pushing is restricted.',
     'Reuse fresh gates with --reuse. Reconcile interrupted attempts before replaying commands. Report state → evidence → blocker → next action; checkpoint before stopping.', '',
   ];
   atomicWrite(join(genesisDir(repo), 'KICKOFF.md'), lines.join('\n'));
@@ -687,6 +718,13 @@ function commandStatus(parsed) {
     console.log(`active: ${state.lifecycle.active_task || 'none'}`);
     console.log(`blocker: ${state.lifecycle.blocker || 'none'}`);
     console.log(`next: ${state.lifecycle.next_action}`);
+    const tasks = state.tasks.filter((task) => !(state.workflow && task.id === 'SPEC-1'));
+    const counts = {};
+    for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
+    console.log(`tasks: ${Object.entries(counts).map(([name, count]) => `${count} ${name}`).join(', ') || 'none'}`);
+    const open = tasks.filter((task) => !['done', 'rejected'].includes(task.state));
+    for (const task of open.slice(0, 12)) console.log(`  ${task.id} [${task.state}] ${excerpt(task.outcome, 80)}`);
+    if (open.length > 12) console.log(`  +${open.length - 12} more; genesis status <repo> --json lists all`);
   }
 }
 
@@ -697,6 +735,13 @@ function commandCheckpoint(parsed) {
   saveState(repo, state, 'checkpoint', state.checkpoint);
   runGraphizer(repo);
   console.log(`Checkpointed ${state.project.name}`);
+  const local = unpublished(repo);
+  if (local) console.log(`Unpublished: ${local}. A local commit is not a handoff; push and open a pull request when that is authorized.`);
+  const active = state.tasks.find((task) => task.id === state.lifecycle.active_task);
+  console.log(['', 'Resume prompt (paste into a new session):',
+    `Continue ${state.project.name} in ${repo}. Read .genesis/KICKOFF.md, then run \`genesis brief .\`.`,
+    `Active task: ${active ? `${active.id} — ${active.outcome}` : 'none'}. Next action: ${state.lifecycle.next_action}`,
+    'Verify the current state yourself before building (git status, rerun the gates); do not rely on earlier completion claims.'].join('\n'));
 }
 
 function commandDashboard(parsed) {
@@ -872,7 +917,9 @@ function commandPlan(parsed, raw) {
     if (result.problems.length) throw new Error(`plan is incomplete; ${result.problems.join(', ')}`);
     if (state.workflow.plan_check?.source_hash !== hash) throw new Error('run plan check against the current tasks before approval');
     state.workflow.plan_approval = { human, reason: nested.options.reason || null, at: now(), source_hash: hash };
-    const first = result.tasks.find((task) => task.state === 'queued' && readyTask(state, task));
+    const named = nextOption(nested.options.next);
+    const first = result.tasks.find((task) => task.state === 'queued' && readyTask(state, task) && (!named || task.id === named));
+    if (named && !first) throw new Error(`--next must name a queued task whose dependencies are complete: ${named}`);
     if (first) { first.state = 'active'; first.base_manifest = inputManifest(repo, first.inputs); }
     state.lifecycle = { phase: 'build', status: first ? 'active' : 'ready', active_task: first?.id || null, blocker: null, next_action: first?.next_action || 'Add the next approved implementation task.' };
     saveState(repo, state, 'plan.approved', { human, source_hash: hash });
@@ -894,7 +941,7 @@ function commandAgent(parsed, raw) {
   const block = `<!-- genesis:start -->
 ## Genesis workflow
 
-Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`.
+Before changing this repository, load the Genesis and Ponytail skills and read \`.genesis/KICKOFF.md\`. Obey its phase instruction: do not write product implementation code during discovery, specification, or planning. Use the Genesis CLI for tasks, proof, decisions, approvals, and checkpoints. End every work session with \`genesis checkpoint .\`. If the shell reports \`genesis: command not found\`, run the installed launcher directly: \`~/.local/bin/genesis\` (or \`$GENESIS_BIN_DIR/genesis\`).
 
 ### Ask the index before reading the code
 
@@ -946,6 +993,9 @@ function commandTask(parsed, raw) {
       const unknown = requirements.filter((item) => !known.has(item));
       if (unknown.length) throw new Error(`unknown requirement: ${unknown.join(', ')}`);
     }
+    const review = nested.options.review === true || !nested.options.review ? null : nested.options.review;
+    if (review && review !== 'model') throw new Error('--review accepts only: model');
+    if (review && risk !== 'medium') throw new Error('--review model applies only to medium-risk tasks; low risk needs no review and higher risk needs a human');
     const gates = values(nested.options.gate).map(parseGate);
     gates.push(...values(nested.options.runtime).map(value => ({ ...parseGate(value), kind: 'runtime', max_age: positive(nested.options['runtime-max-age'] || 300, 'runtime-max-age') })));
     if (new Set(gates.map(g => g.id)).size !== gates.length) throw new Error('duplicate gate id');
@@ -955,7 +1005,7 @@ function commandTask(parsed, raw) {
     const task = {
       id,
       outcome: nested.options.outcome === true || !nested.options.outcome ? 'Define the task outcome.' : nested.options.outcome,
-      state: 'queued', risk, owner: nested.options.owner || null,
+      state: 'queued', risk, owner: nested.options.owner || null, ...(review ? { review } : {}),
       scope: values(nested.options.scope), dependencies: values(nested.options.depends), requirements,
       inputs: values(nested.options.input), environment: values(nested.options.env), scenarios: values(nested.options.scenario).map(value => JSON.parse(value)),
       gates,
@@ -979,6 +1029,7 @@ function commandTask(parsed, raw) {
     }
     saveState(repo, state, 'task.added', { id, outcome: task.outcome });
     console.log(`Added ${id}`);
+    if (risk !== 'low' && !task.scenarios.length) console.error(`genesis: note: ${id} is ${risk} risk and has no --scenario. Name the outcome a user would observe and the gate that proves it; otherwise a passing suite is the only evidence that it works.`);
     return;
   }
   const id = nested.options.id === true || !nested.options.id ? nested.positional[1] : nested.options.id;
@@ -1006,7 +1057,7 @@ function commandTask(parsed, raw) {
     return;
   }
   if (action === 'complete') {
-    completeTask(repo, state, task);
+    completeTask(repo, state, task, nextOption(nested.options.next));
     saveState(repo, state, 'task.completed', { id });
     console.log(`Completed ${id}`);
     return;
@@ -1039,7 +1090,11 @@ function commandRecord(parsed, raw) {
   const record = state[key].at(-1); record.paths = values(nested.options.path); record.tags = values(nested.options.tag);
   for (const path of record.paths) safePath(repo, path);
   if (nested.options.supersedes) {
-    const previous = state[key].find(r => r.id === nested.options.supersedes && r.id !== id);
+    // Prefer a record of the same type; otherwise accept exactly one match among the other types.
+    const matches = list => list.filter(r => typeof r === 'object' && r.id === nested.options.supersedes && r.id !== id);
+    const same = matches(state[key]), other = same.length ? [] : matches(['knowledge', 'decisions', 'assumptions', 'invariants'].filter(k => k !== key).flatMap(k => state[k]));
+    if (other.length > 1) throw new Error('superseded record id matches more than one record type');
+    const previous = same[0] || other[0];
     if (!previous) throw new Error('unknown superseded record');
     previous.status = 'superseded'; previous.superseded_by = id; record.supersedes = previous.id;
   }
@@ -1189,14 +1244,22 @@ function commandControl(parsed, raw) {
   const record = { id: randomUUID(), at: now(), action, task: id, human: nested.options.human || null, reason: nested.options.reason || null, revision: nested.options.revision || null };
   if (action === 'approve') {
     requireBuild(repo, state, task);
-    requireText(record.human, '--human'); requireText(record.reason, '--reason');
+    const reviewer = nested.options.reviewer || null;
+    if (reviewer) {
+      if (record.human) throw new Error('record a review with --human or --reviewer, not both');
+      if (task.review !== 'model') throw new Error(`${id} requires human review; only a task added with --review model accepts a recorded model review`);
+      record.reviewer = requireText(reviewer, '--reviewer');
+      record.scope = requireText(nested.options.scope, '--scope');
+      record.open = values(nested.options.open).filter(item => item !== true);
+    } else requireText(record.human, '--human');
+    requireText(record.reason, '--reason');
     const gate = task.gates.find(g => g.id === nested.options.gate);
     if (!gate || gate.command) throw new Error('approve requires a manual review gate; executable gates must be run');
-    if (record.human === task.owner) throw new Error('task owner cannot approve independent review');
+    if ((record.human || record.reviewer) === task.owner) throw new Error('task owner cannot approve independent review');
     if (!task.gates.some(g => g.command) || task.gates.some(g => g.command && g.mandatory && proofStatus(repo, state, task, g) !== 'pass')) throw new Error('run current executable proof before review');
     gate.kind = 'review'; gate.status = 'pass';
     gate.evidence = saveProof(repo, { task: id, gate: gate.id, kind: 'review', attempt: record.id,
-      human: record.human, reason: record.reason, observed_at: record.at,
+      ...(reviewer ? { reviewer: record.reviewer, scope: record.scope, open: record.open } : { human: record.human }), reason: record.reason, observed_at: record.at,
       source_hash: digest(inputManifest(repo, task.inputs)), config_hash: taskConfig(state, task),
       reviewed_proofs: digest(task.gates.filter(g => g.command).map(g => g.evidence?.hash)) });
   } else {
@@ -1206,7 +1269,7 @@ function commandControl(parsed, raw) {
       task.state = 'paused';
     } else if (['resume', 'retry', 'requeue'].includes(action)) {
       if (runningAttempt(state)) throw new Error('wait for the running attempt to stop or reconcile with recover');
-      if (state.workflow && (specStatus(repo, state).status !== 'approved' || planStatus(repo, state).status !== 'approved' || state.lifecycle.phase !== 'build')) throw new Error('current specification and plan approval required');
+      if (state.workflow && (specStatus(repo, state).status !== 'approved' || planStatus(repo, state).status !== 'approved' || !['build', 'verify'].includes(state.lifecycle.phase))) throw new Error('current specification and plan approval required');
       if (action === 'requeue') { task.state = 'queued'; if (state.lifecycle.active_task === id) state.lifecycle.active_task = null; }
       else activate(repo, state, task);
     } else if (action === 'reject') { task.state = 'rejected'; if (state.lifecycle.active_task === id) state.lifecycle.active_task = null; }
@@ -1257,7 +1320,16 @@ async function commandRun(parsed) {
   const deadline = Date.now() + positive(parsed.options.timeout || 600000, 'timeout');
   for (let count = 0; count < limit; count++) {
     let state = loadState(repo), task = state.tasks.find(t => t.id === state.lifecycle.active_task);
-    if (!task) { console.log('No active task'); return; }
+    if (!task) {
+      const picked = withLock(repo, () => {
+        const latest = loadState(repo);
+        const next = latest.tasks.find(t => t.state === 'queued' && readyTask(latest, t) && latest.authorizations.some(a => validAuthorization(latest, t, a.id)));
+        if (next) { activate(repo, latest, next); requireBuild(repo, latest, next); saveState(repo, latest, 'run.activated-task', { task: next.id }); }
+        return next?.id;
+      });
+      if (!picked) { console.log('No active task'); return; }
+      state = loadState(repo); task = state.tasks.find(t => t.id === picked);
+    }
     requireBuild(repo, state, task);
     const grant = state.authorizations.find(a => validAuthorization(state, task, a.id));
     if (!grant) throw new Error(`${task.id} needs a current task-scoped command authorization`);
@@ -1604,7 +1676,7 @@ Usage:
   genesis spec start|status|check <repo>
   genesis spec approve <repo> --human NAME --reason TEXT
   genesis plan status|check <repo>
-  genesis plan approve <repo> --human NAME --reason TEXT
+  genesis plan approve <repo> --human NAME --reason TEXT [--next TASK-ID]
   genesis plan reopen <repo> --human NAME --reason TEXT
   genesis agent connect <repo> [--codex] [--claude] [--write]
   genesis status|checkpoint|dashboard|cleanup <repo>
@@ -1617,12 +1689,19 @@ Usage:
   genesis trace <repo> --list [NAME]        print recorded local events, optionally only one kind
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
-  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low] [--gate id:command]
+      any record: [--id ID] [--path PATH] [--tag TAG] [--supersedes RECORD-ID]; decision|assumption: [--status TEXT]
+  genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low|medium|high|critical] [--owner NAME]
+      [--gate id:command] [--runtime id:command] [--runtime-max-age SECONDS] [--scenario JSON]
+      [--scope PATH] [--input PATH] [--env NAME] [--depends TASK-ID] [--next TEXT]   list flags repeat
   genesis task set|complete <repo> --id ID
+      set: [--state blocked|failed] [--next TEXT] [--blocker TEXT] [--note TEXT] [--failure TEXT] [--limitation TEXT]
   genesis gate <repo> [task-id]
-  genesis control approve <repo> [task-id] --gate ID --human NAME [--reason TEXT]
+  genesis control approve <repo> [task-id] --gate ID --human NAME --reason TEXT
+      or, for a task added with --review model: --reviewer ID --scope TEXT --reason TEXT [--open FINDING]
   genesis control <reject|pause|resume|retry|requeue|rollback> <repo> [task-id]
+  genesis task complete <repo> --id ID --next TASK-ID   finish one task and start the one you name
   genesis learn propose|evaluate|review|approve|rollback <repo> ...
+  genesis task add ... --risk medium --review model   let a recorded model review clear this task's independent-review gate
   genesis context|next <repo> [task-id] [--bytes 8000] [--id RECORD] [--full] [--stats] [--since HASH]
   genesis brief <repo> [task-id] [--stage research|plan|implement|verify|recover]
   genesis authorize grant <repo> --id ID --task ID --command CMD --human NAME --reason TEXT --expires ISO
@@ -1637,7 +1716,7 @@ Usage:
 
 async function main(raw) {
   const command = raw[0];
-  if (!command || command === 'help' || command === '--help') return printHelp();
+  if (!command || command === 'help' || raw.includes('--help')) return printHelp();
   const parsed = parseArgs(raw.slice(1));
   if (command === 'gate') return commandGate(parsed);
   if (command === 'run') return commandRun(parsed);

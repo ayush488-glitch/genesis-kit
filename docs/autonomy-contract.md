@@ -14,7 +14,7 @@ This release implements the implementation and session-review recommendations ap
 
 ## Boundaries
 
-Local attribution records do not authenticate a human. Host permissions enforce credentials, network and filesystem isolation; a working directory or worktree is not a sandbox. Repository policy cannot protect against an actor that can rewrite both the verifier and its data. The evaluator must be controlled outside the candidate for adversarial optimization.
+Local attribution records do not authenticate a human, and `--reviewer` does not authenticate a reviewing session: both are attribution. A recorded model review is accepted only on a medium-risk task whose contract declares `--review model`, which in a specification workflow is part of the plan a human approves. Host permissions enforce credentials, network and filesystem isolation; a working directory or worktree is not a sandbox. Repository policy cannot protect against an actor that can rewrite both the verifier and its data. The evaluator must be controlled outside the candidate for adversarial optimization.
 
 No graph database, hosted dashboard, automatic production deployment, automatic global-policy promotion or unmeasured model routing is included. Runtime and outcome checks remain domain-specific commands supplied by the project. There is no promise of exactly-once external effects or a benchmark improvement percentage.
 
@@ -69,7 +69,7 @@ genesis authorize list .
 genesis authorize revoke . --id A-1
 ```
 
-Choose a short expiry appropriate to the actual session. Grants bind one task, command and task configuration. They persist across sessions and must reflect the user's real authorization; recording a name is attribution, not identity verification. Existing specification and plan approvals remain required. The runner invokes one host command, checks declared file scope, runs fresh mandatory gates, and completes only when every completion requirement passes. Medium/high-risk work stops for independent human review. After review, rerunning `genesis run` reuses the successful worker only when its source/configuration and authorization still match. It also reuses valid gate evidence.
+Choose a short expiry appropriate to the actual session. Grants bind one task, command and task configuration. They persist across sessions and must reflect the user's real authorization; recording a name is attribution, not identity verification. Existing specification and plan approvals remain required. The runner invokes one host command, checks declared file scope, runs fresh mandatory gates, and completes only when every completion requirement passes. Medium/high-risk work stops for independent human review. With no active task, `genesis run` continues only into a queued task that has its own current grant; it never starts unauthorized backlog. After review, rerunning `genesis run` reuses the successful worker only when its source/configuration and authorization still match. It also reuses valid gate evidence.
 
 Attempts record IDs, parent/child PIDs, start/end times, failure classification and bounded redacted output. POSIX timeouts/signals kill the child process group. Windows termination only targets the child; use a host job/container for stronger process isolation. Operator pause and grant expiry/revocation are checked while a child runs. Cooperative writers use a process lock and reload current state when finishing work, so child completion cannot overwrite a pause. Direct edits outside the CLI bypass that lock.
 
