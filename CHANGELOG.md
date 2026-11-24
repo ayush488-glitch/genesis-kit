@@ -2,6 +2,8 @@
 
 ## 2.4.0 — Unreleased
 
+- Let agents report friction they worked around. `genesis trace <repo> --event papercut --message "tried ...; expected ...; got ...; fix ..."` records a local, redacted event, and `genesis trace <repo> --list [NAME]` prints recorded events. The operating contract, the skill and the kickoff ask for a papercut whenever a command, documented flag or instruction does not behave as documented. Agents were absorbing such failures silently, so the same turns were lost again in the next session and the defect never reached the owner.
+
 - Record the revision of the nested repository that owns a task's scope in gate proofs. A workspace whose root has no commits (for example, several repositories checked out side by side) previously recorded `revision.commit: null`, so evidence could not be tied to the commit it verified. Proofs now add `revision.repo` when the scope resolves to one nested repository; other layouts are unchanged.
 
 Review follow-ups (#13-#20):

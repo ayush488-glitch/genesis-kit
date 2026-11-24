@@ -617,6 +617,7 @@ function renderKickoff(repo, state) {
     'Fetch full records with `genesis context . --id ID` only when needed. Do not load project.json or historical proof wholesale.',
     'Ask the index before reading code: `genesis query . search|scope|callers|callees|impact|path` (`--json` for parsing). Run `genesis query . impact PATH` before editing shared code. Answers are advisory static analysis; `ambiguous` means candidates were not ruled out, so confirm in source.',
     'Run `genesis serve .` for a live map of the repository when structure is unclear; it reindexes on save and is read-only. Run `genesis index .` if the index is stale and nothing is watching.',
+    'When a command, documented flag or instruction does not behave as documented, record it before working around it: `genesis trace . --event papercut --message "tried ...; expected ...; got ...; fix ..."`.',
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
@@ -743,8 +744,15 @@ function commandServe(parsed) {
 function commandTrace(parsed) {
   const repo = resolve(parsed.positional[0] || '.');
   loadState(repo);
+  if (parsed.options.list) {
+    const name = parsed.options.list === true ? null : parsed.options.list;
+    for (const item of recentTraces(repo, Infinity)) if (!name || item.event === name) console.log(JSON.stringify(item));
+    return;
+  }
   const event = parsed.options.event === true || !parsed.options.event ? parsed.positional[1] : parsed.options.event;
   if (!event) throw new Error('trace requires --event <name>');
+  // A papercut is friction the agent worked around; without the detail the owner cannot fix it.
+  if (event === 'papercut' && (typeof parsed.options.message !== 'string' || !parsed.options.message.trim())) throw new Error('a papercut needs --message "tried ...; expected ...; got ...; fix ..."');
   const data = { task: parsed.options.task || null, message: parsed.options.message || '' };
   if (parsed.options.data && parsed.options.data !== true) data.detail = JSON.parse(parsed.options.data);
   trace(repo, event, data);
@@ -1604,7 +1612,9 @@ Usage:
   genesis serve <repo> [--port N] [--open]   live control panel, read-only
   genesis query <repo> search|defines|scope|callers|callees|impact|neighbours|path ...
   genesis mcp <repo>                        expose the index to an agent over MCP stdio
-  genesis trace <repo> --event NAME [--task ID] [--message TEXT]
+  genesis trace <repo> --event NAME [--task ID] [--message TEXT] [--data JSON]
+  genesis trace <repo> --event papercut --message "tried ...; expected ...; got ...; fix ..."   report friction you worked around
+  genesis trace <repo> --list [NAME]        print recorded local events, optionally only one kind
   genesis record decision|knowledge <repo> --title TEXT --text TEXT [--source REF]
   genesis record assumption|invariant <repo> --text TEXT [--source REF]
   genesis task add <repo> --id ID --outcome TEXT [--requirement ID] [--risk low] [--gate id:command]

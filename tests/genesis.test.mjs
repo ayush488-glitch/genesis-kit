@@ -375,3 +375,17 @@ test('context carries scope cards and a symptom map resolved against the index',
   // Advisory, not authority: these are hints from static analysis, and say so.
   for (const entry of [...packet.scope_cards, ...packet.symptoms]) assert.equal(entry.advisory, true);
 });
+
+test('a papercut records the friction an agent worked around and can be listed', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['trace', repo, '--event', 'papercut'], { ok: false });
+  run(['trace', repo, '--event', 'papercut', '--message', 'tried task add --help; expected usage; got an error; fix: print help. token=abc123']);
+  run(['trace', repo, '--event', 'tool.error', '--message', 'unrelated']);
+  const listed = run(['trace', repo, '--list', 'papercut']).stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(listed.length, 1);
+  assert.match(listed[0].data.message, /tried task add --help; expected usage/);
+  assert.doesNotMatch(listed[0].data.message, /abc123/);
+  assert.ok(run(['trace', repo, '--list']).stdout.trim().split('\n').length >= 2);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /--event papercut/);
+});
