@@ -2,6 +2,8 @@
 
 ## 2.4.0 — Unreleased
 
+- Let a medium-risk task opt into a recorded model review. `genesis task add --risk medium --review model` declares it, and `genesis control approve --reviewer ID --scope TEXT --reason TEXT [--open FINDING]` records the receipt with the same source, configuration and proof binding as a human review. The human-only gate was being left pending indefinitely, or signed by the building agent in the human's name on a blanket chat approval, while separate reviewing sessions were finding real defects that could not be recorded as review evidence. The default is unchanged: without `--review model` a human is required, and high and critical risk always need one. The review mode is part of the task configuration and the plan hash, so adding it later stales the approval.
+
 - Record the revision of the nested repository that owns a task's scope in gate proofs. A workspace whose root has no commits (for example, several repositories checked out side by side) previously recorded `revision.commit: null`, so evidence could not be tied to the commit it verified. Proofs now add `revision.repo` when the scope resolves to one nested repository; other layouts are unchanged.
 
 Review follow-ups (#13-#20):

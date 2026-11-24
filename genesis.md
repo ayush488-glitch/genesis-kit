@@ -31,7 +31,7 @@ Index answers are advisory. Confirm them in source, treat `ambiguous` as a candi
 
 Record consequential decisions, assumptions, confirmed invariants, and durable knowledge with `genesis record`. Include provenance in `--source`; do not leave reasoning only in chat.
 
-Proof is fail-closed: mandatory evidence must be `pass` and match current sources. Medium risk and above needs independent review. A maker cannot approve its own review evidence.
+Proof is fail-closed: mandatory evidence must be `pass` and match current sources. Medium risk and above needs independent review. A maker cannot approve its own review evidence. A medium-risk task may declare `--review model` so that a separate reviewing session can record the review; higher risk needs a human.
 
 Run `genesis serve <repo>` to watch the codebase as a live map while working; it reindexes on save and is read-only. Use local traces for debugging. Secrets are always redacted, raw traces are not committed, and the generated dashboard never becomes a second source of truth.
 
