@@ -22,7 +22,7 @@ Load the official Ponytail skill at `full` before architecture or code changes. 
 - Ask the index: `genesis query <repo> search|scope|defines|callers|callees|impact|neighbours|path` (`--json` to parse). Expose the same questions to an MCP host with `genesis mcp <repo>`.
 - See the codebase: `genesis serve <repo> --open` draws it as a live map, reindexes on save and is read-only.
 
-If `genesis` is not on `PATH`, run `node <genesis-kit>/tools/genesis.mjs`.
+If `genesis` is not on `PATH`, run the installed launcher directly (`~/.local/bin/genesis`, or `$GENESIS_BIN_DIR/genesis`), or `node <genesis-kit>/tools/genesis.mjs`.
 
 ## Session contract
 
@@ -31,6 +31,8 @@ Before editing, report `state → evidence → blocker → next action`. Inspect
 Query the index before reading widely or grepping. `genesis query <repo> search NAME` finds where a name is defined; `scope PATH` gives a file or directory's dependencies in both directions; `callers`/`callees` give call edges; `impact PATH` gives everything that transitively imports a file, which is the blast radius to check before editing shared code; `path FROM TO` shows how two files connect. Search the repository before adding anything, and query it before searching.
 
 Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript and Python are extracted, so absence from the index is not evidence of absence in the repository.
+
+Keep going on authorized work. Stop only for a Genesis gate, an action the human has not authorized that is irreversible, spends money or reaches outside the repository, or a real blocker, conflicting requirement or uncertain side effect. Look in the repository, its configuration and attached tools before asking the human for a fact, and say what you checked. A build task ends at an opened pull request for its branch unless pushing is restricted; never push to the default branch, merge or deploy unasked. `genesis.md` has the full rule.
 
 Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specification, and planning, do not write product implementation code.
 
@@ -43,9 +45,9 @@ Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specifica
 5. After approval, record it with `genesis spec approve <repo> --human NAME --reason "..."`.
 6. Create bounded tasks using approved `--requirement` identifiers and at least one executable `--gate` per task.
 7. Run `genesis plan check <repo>`, show generated `.genesis/PLAN.md`, and stop for explicit human approval.
-8. Record approval with `genesis plan approve <repo> --human NAME --reason "..."`, then implement only the activated task.
+8. Record approval with `genesis plan approve <repo> --human NAME --reason "..."`, then implement only the activated task. Add `--next TASK-ID` when the task to start is not the first queued one.
 
-Create one bounded task. Every mandatory check must pass against the current source hash; pending, skipped, failed, missing, and stale proof block completion. Medium risk and above requires independent review.
+Create one bounded task. Completing a task starts only a task that was waiting on it through `--depends`; other queued work stays queued until you name it with `genesis task complete <repo> --id ID --next NEXT` or `genesis control resume <repo> NEXT`. Every mandatory check must pass against the current source hash; pending, skipped, failed, missing, and stale proof block completion. Medium risk and above requires independent review.
 
 Use `genesis record knowledge|decision|assumption|invariant` for durable context and provenance. Do not leave a binding decision or discovered constraint only in chat.
 
@@ -56,6 +58,14 @@ Non-low-risk tasks automatically receive an `independent-review` gate. A separat
 ```bash
 genesis control approve <repo> <task-id> --gate independent-review --human <name> --reason "..."
 ```
+
+A medium-risk task added with `--review model` may instead be cleared by a review from a separate session that did not build it:
+
+```bash
+genesis control approve <repo> <task-id> --gate independent-review --reviewer <reviewing-session-id> --scope "what was reviewed" --reason "..." [--open "unresolved finding"]
+```
+
+The receipt is bound to the current source, configuration and executable proof exactly like a human review, so it goes stale when any of them change. The session that built the work never records its own review. In a specification workflow the review mode is part of the plan the human approves; do not add it afterwards. High and critical risk always need a human.
 
 Checkpoint before handing off:
 
@@ -83,3 +93,7 @@ Use one bounded brief for the active slice; do not load all project.json, resear
 Use `--since` only after receiving and retaining the complete packet for that fingerprint. The kickoff's fingerprint alone is not that packet. Token estimates are labeled heuristics; measure actual host usage before claiming savings. Use the original recipes for research, plan, implement, verify and recover without requiring a specific model. Run `genesis dashboard <repo> --open` for the read-only control panel; its buttons copy commands, never execute or approve them. Run `genesis serve <repo> --open` for the live panel: it watches sources, reindexes incrementally on save, and draws the repository as a symbol map with call edges. Both are projections; neither approves work. Run `genesis index <repo>` if the index is stale and nothing is watching.
 
 The brief already carries scope cards and a symptom map read from the index: what each declared scope depends on and what depends on it, and the declarations named by the task text. Start there rather than re-deriving them.
+
+## Papercuts
+
+When a Genesis command, a documented flag, a tool or an instruction does not behave as documented, record it before working around it: `genesis trace <repo> --event papercut --message "tried ...; expected ...; got ...; fix ..."`. Say what you tried, what you expected, what happened and what would fix it. Do this for a flag the help lists and the command rejects, a command that exits 0 on an error, a refusal whose message does not say what to do next, or a step you had to discover by reading source. Papercuts are local traces: they change no state and are not a substitute for recording a blocker on the task. List them with `genesis trace <repo> --list papercut`.

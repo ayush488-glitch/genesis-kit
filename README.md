@@ -6,7 +6,7 @@
 
 [![Tests](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ayush488-glitch/genesis-kit/actions/workflows/test.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-355C4B)](https://nodejs.org/)
-[![Version](https://img.shields.io/badge/version-2.3.0-4A6274)](package.json)
+[![Version](https://img.shields.io/badge/version-2.4.0-4A6274)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-665474)](LICENSE)
 
 [Quick start](#quick-start) · [Architecture](#architecture) · [Completion contract](#completion-contract) · [Experiments](#evaluated-learning) · [Documentation](#documentation)
@@ -244,13 +244,23 @@ My project goal is: "REPLACE THIS WITH WHAT I WANT TO BUILD."
 
 8. Continue only authorized active work. Run current gates; obtain independent
    review for non-low-risk tasks. Use `genesis task complete`, never a state
-   edit, to complete work. If I authorize a bounded host command, record a
+   edit, to complete work. Completion starts only a task that depended on
+   the finished one; name any other next task with `--next ID` or
+   `genesis control resume . ID` instead of working an old queued item. If I authorize a bounded host command, record a
    task-scoped, expiring grant and use `genesis run`. Reuse valid authorization
    and proof across sessions. Never invent a reviewer or approval.
 
 9. After interruption, inspect attempts and uncertain side effects before
    recovery or retry. Record durable discoveries and checkpoint before stopping.
    Treat learned rules as proposals until evaluation, review and promotion pass.
+
+10. Keep going on authorized work. Stop only for a Genesis gate, an action I
+   have not authorized that is irreversible, spends money or reaches outside
+   the repository, or a real blocker. Look in the repository, its
+   configuration and attached tools before asking me for a fact, and say what
+   you checked. End a build task at an opened pull request for its branch
+   unless I restrict pushing; never push to the default branch, merge or
+   deploy unasked. Say what was verified, what was only built and what is left.
 ```
 
 The installer supports skill discovery in Codex and Claude Code. Other shell-capable hosts can read the same Markdown/JSON contract and invoke the CLI; see [agent adapters](AGENT-ADAPTERS.md). The installer copies Genesis and a pinned MIT-licensed [Ponytail](https://github.com/DietrichGebert/ponytail) skill and creates a CLI symlink. It does not download runtime dependencies or modify shell startup files.
@@ -266,7 +276,7 @@ bash ~/.local/share/genesis-kit/install.sh
 ~/.local/bin/genesis help
 ```
 
-For a later coding session:
+For a later coding session, `genesis checkpoint .` prints a resume prompt filled in with the active task and next action, and says when the branch has work that was never pushed. The generic form is:
 
 ```text
 Resume this repository with Genesis and Ponytail full. Read .genesis/KICKOFF.md,
@@ -290,7 +300,7 @@ $$
 \mathrm{RequiredReview}(t).
 $$
 
-Here $G_t$ is the set of mandatory gates, including at least one executable gate. Workflow approval is required for specification-first projects. Scope is enforced when declared and is required for autonomous execution. Independent human review is required above low risk.
+Here $G_t$ is the set of mandatory gates, including at least one executable gate. Workflow approval is required for specification-first projects. Scope is enforced when declared and is required for autonomous execution. Independent review is required above low risk. It is a human review by default; a medium-risk task added with `--review model` may instead be cleared by a recorded review from a separate session that did not build it (`genesis control approve --reviewer ID --scope TEXT --reason TEXT`), bound to the same source, configuration and proof. High and critical risk always need a human.
 
 Fresh executable proof binds the check to source inputs, task configuration and selected environment values. It retains command, attempt identity, timestamps, exit status and an integrity hash. A source-mutating check cannot certify its own result. New executable evidence invalidates review of an older attempt. Runtime gates additionally produce structured identity receipts with a freshness limit.
 
@@ -321,6 +331,8 @@ genesis control approve . T-1 --gate independent-review \
   --human reviewer --reason "Checked the diff and current evidence"
 genesis task complete . --id T-1
 genesis checkpoint .
+# What is done and what is left, from state.
+genesis status .
 ```
 
 Existing repositories start with `genesis adopt .` for a read-only discovery report. After approval, `genesis adopt . --write` creates the harness without reorganizing source code. `genesis migrate .` inspects legacy state; add `--write` to migrate while preserving legacy files.
@@ -365,6 +377,8 @@ bash -n install.sh
 CI runs syntax checks and the suite on Node 18 and 22. An optional [development container](.devcontainer/devcontainer.json) provides the contributor runtime. The tests cover completion bypasses, missing/tampered evidence, source and environment drift, dependency readiness, runtime mismatch, worker reuse, pause/revocation, timeout, live-process recovery, context supersession and evaluated rule promotion. These are synthetic regression cases, not a representative coding benchmark; private session transcripts are not distributed.
 
 For capability experiments, compare the same host and model with a fixed task set, matched budgets and an independently protected evaluator. Report paired completion outcomes, regressions, interventions, recovery behavior, elapsed time and actual cost. Preserve failed runs and use held-out tasks after candidate selection.
+
+To see what agents and people actually did, `node tools/session-audit.mjs` reads local Claude Code and Codex transcripts and prints one row per session: human turns, interruptions, refused tool calls, tool calls and errors, Genesis commands run, approvals the agent recorded itself, papercuts filed, whether it checkpointed, and linked pull requests. Use `--since`, `--project` and `--json` to narrow or export it. The output carries counts and identifiers only, never prompt text or tool output. Human turns per opened pull request, measured before and after a harness change on the same tasks, is the number to watch; a count alone does not say why a person stepped in.
 
 The [architecture figure](docs/assets/README.md) is reproducible from committed LaTeX/TikZ source. Building documentation assets requires Tectonic and Poppler; running Genesis does not.
 

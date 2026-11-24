@@ -117,6 +117,43 @@ test('medium-risk tasks require independent human-reviewed evidence', () => {
   run(['task', 'complete', repo, '--id', 'T-2']);
 });
 
+test('a medium-risk task can opt into a recorded model review; everything else still needs a human', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  const approve = (task, ...rest) => ['control', 'approve', repo, task, '--gate', 'independent-review', ...rest];
+  run(['task', 'add', repo, '--id', 'T-high', '--risk', 'high', '--review', 'model', '--outcome', 'Too risky', ...gate], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-low', '--review', 'model', '--outcome', 'Needs no review', ...gate], { ok: false });
+  run(['task', 'add', repo, '--id', 'T-bad', '--risk', 'medium', '--review', 'bot', '--outcome', 'Unknown mode', ...gate], { ok: false });
+
+  run(['task', 'add', repo, '--id', 'T-1', '--risk', 'medium', '--owner', 'builder', '--outcome', 'Human-reviewed work', ...gate]);
+  run(['gate', repo, 'T-1']);
+  run(approve('T-1', '--reviewer', 'review-session', '--scope', 'full diff', '--reason', 'no findings'), { ok: false });
+  run(approve('T-1', '--human', 'reviewer', '--reason', 'diff and proof checked'));
+  run(['task', 'complete', repo, '--id', 'T-1']);
+
+  run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--owner', 'builder', '--review', 'model', '--outcome', 'Model-reviewed work', ...gate]);
+  run(['gate', repo, 'T-2']);
+  run(approve('T-2', '--reviewer', 'builder', '--scope', 'full diff', '--reason', 'self-review'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--reason', 'no scope given'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--human', 'someone', '--scope', 'full diff', '--reason', 'both'), { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'diff of src and tests', '--open', 'copy not reviewed', '--reason', 'no blocking findings'));
+  const evidence = state(repo).tasks.find((task) => task.id === 'T-2').gates.find((item) => item.id === 'independent-review').evidence;
+  const proof = JSON.parse(readFileSync(join(repo, evidence.path), 'utf8'));
+  assert.equal(proof.reviewer, 'review-session');
+  assert.equal(proof.scope, 'diff of src and tests');
+  assert.deepEqual(proof.open, ['copy not reviewed']);
+  assert.equal(proof.human, undefined);
+
+  writeFileSync(join(repo, 'README.md'), '# Changed after review\n');
+  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
+  run(['gate', repo, 'T-2']);
+  run(['task', 'complete', repo, '--id', 'T-2'], { ok: false });
+  run(approve('T-2', '--reviewer', 'review-session', '--scope', 'full diff again', '--reason', 'rechecked'));
+  run(['task', 'complete', repo, '--id', 'T-2']);
+  assert.equal(state(repo).tasks.find((task) => task.id === 'T-2').state, 'done');
+});
+
 test('pause blocks task work until an explicit control resume', () => {
   const repo = tempRepo();
   run(['init', repo]);
@@ -269,6 +306,34 @@ Clinic staff.
   assert.equal(state(repo).lifecycle.phase, 'planning');
 });
 
+test('plan approval starts the task the approver names, and work can continue after a completion', () => {
+  const repo = tempRepo();
+  run(['init', repo, '--workflow', 'new-product', '--objective', 'Build a clinic scheduler']);
+  writeFileSync(join(repo, 'SPEC.md'), ['# Product specification', '## Problem', 'Scheduling.', '## Users', 'Staff.',
+    '## Functional requirements', '- FR-1: Create appointments.', '## Non-functional requirements', '- NFR-1: Tenant isolation.',
+    '## Constraints', '- Node.js 18+.', '## Non-goals', '- Self-service.', '## Acceptance criteria', '- AC-1: A test creates an appointment.',
+    '## Risks', '- Tenant boundaries.', '## Open questions', '- None.', ''].join('\n'));
+  run(['spec', 'check', repo]);
+  run(['spec', 'approve', repo, '--human', 'owner', '--reason', 'reviewed']);
+  const requirements = ['--requirement', 'FR-1', '--requirement', 'NFR-1', '--requirement', 'AC-1'];
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  run(['task', 'add', repo, '--id', 'T-old', '--outcome', 'Older backlog item', ...requirements, ...gate]);
+  run(['task', 'add', repo, '--id', 'T-new', '--outcome', 'What the human asked for', ...requirements, ...gate]);
+  run(['plan', 'check', repo]);
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed', '--next', 'T-missing'], { ok: false });
+  run(['plan', 'approve', repo, '--human', 'owner', '--reason', 'reviewed', '--next', 'T-new']);
+  assert.equal(state(repo).lifecycle.active_task, 'T-new');
+  run(['gate', repo, 'T-new']);
+  run(['task', 'complete', repo, '--id', 'T-new']);
+  let project = state(repo);
+  assert.equal(project.lifecycle.active_task, null);
+  assert.equal(project.tasks.find((task) => task.id === 'T-old').state, 'queued');
+  run(['control', 'resume', repo, 'T-old', '--human', 'owner']);
+  project = state(repo);
+  assert.equal(project.lifecycle.phase, 'build');
+  assert.equal(project.lifecycle.active_task, 'T-old');
+});
+
 test('specification changes stale approval and agent connection preserves repository instructions', () => {
   const repo = tempRepo();
   run(['init', repo, '--workflow', 'new-product', '--objective', 'Build one thing']);
@@ -374,4 +439,95 @@ test('context carries scope cards and a symptom map resolved against the index',
   assert.equal(symbol.line, 2);
   // Advisory, not authority: these are hints from static analysis, and say so.
   for (const entry of [...packet.scope_cards, ...packet.symptoms]) assert.equal(entry.advisory, true);
+});
+
+test('help names every flag the task and record commands read, and --help never runs a command', () => {
+  const source = readFileSync(cli, 'utf8');
+  const help = run(['help']).stdout;
+  for (const name of ['commandTask', 'commandRecord']) {
+    const body = source.slice(source.indexOf(`function ${name}(`)).split('\nfunction ')[0];
+    const flags = new Set([...body.matchAll(/nested\.options(?:\.([a-z]+)|\['([a-z-]+)'\])/g)].map((match) => match[1] || match[2]));
+    assert.ok(flags.size > 5, `${name} flags were not found`);
+    for (const flag of flags) assert.match(help, new RegExp(`--${flag}\\b`), `help omits --${flag} read by ${name}`);
+  }
+  const repo = tempRepo();
+  run(['init', repo]);
+  assert.match(run(['task', 'add', repo, '--help']).stdout, /Usage:/);
+  assert.match(run(['record', '--help']).stdout, /Usage:/);
+  assert.equal(state(repo).tasks.length, 0);
+});
+
+test('a record can supersede one of another type, and kickoff names the launcher fallback', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['record', 'assumption', repo, '--id', 'A-1', '--text', 'the adapter is optional']);
+  run(['record', 'knowledge', repo, '--id', 'K-1', '--title', 'Adapter', '--text', 'the adapter is required', '--supersedes', 'A-1']);
+  run(['record', 'knowledge', repo, '--id', 'K-2', '--title', 'Other', '--text', 'x', '--supersedes', 'missing'], { ok: false });
+  run(['record', 'assumption', repo, '--id', 'X', '--text', 'same id, assumption']);
+  run(['record', 'decision', repo, '--id', 'X', '--title', 'Same id', '--text', 'decision']);
+  run(['record', 'knowledge', repo, '--id', 'K-3', '--title', 'Ambiguous', '--text', 'x', '--supersedes', 'X'], { ok: false });
+  run(['record', 'assumption', repo, '--id', 'A-2', '--text', 'replaces the assumption', '--supersedes', 'X']);
+  assert.equal(state(repo).decisions.find((record) => record.id === 'X').status, 'accepted');
+  assert.equal(state(repo).assumptions.find((record) => record.id === 'X').status, 'superseded');
+  const project = state(repo);
+  assert.equal(project.assumptions[0].status, 'superseded');
+  assert.equal(project.assumptions[0].superseded_by, 'K-1');
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /command not found.*~\/\.local\/bin\/genesis/);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /Keep going on authorized work: stop only for[^\n]*opened pull request/);
+  assert.match(run(['brief', repo, '--stage', 'implement', '--bytes', '8000']).stdout, /open a pull request/);
+});
+
+test('status rolls up what is done and left, and checkpoint prints a resume prompt and flags unpublished work', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  run(['task', 'add', repo, '--id', 'T-1', '--outcome', 'First slice', ...gate]);
+  run(['task', 'add', repo, '--id', 'T-2', '--outcome', 'Second slice', ...gate]);
+  run(['gate', repo, 'T-1']);
+  run(['task', 'complete', repo, '--id', 'T-1']);
+  const status = run(['status', repo]).stdout;
+  assert.match(status, /tasks: .*1 done/);
+  assert.match(status, /T-2 \[(queued|active)\] Second slice/);
+  assert.doesNotMatch(status, /T-1 \[/);
+  run(['task', 'add', repo, '--id', 'SPEC-1', '--outcome', 'An ordinary task with this name', ...gate]);
+  assert.match(run(['status', repo]).stdout, /SPEC-1 \[(queued|active)\] An ordinary task/);
+
+  let checkpoint = run(['checkpoint', repo]).stdout;
+  assert.match(checkpoint, /Resume prompt[\s\S]*Read \.genesis\/KICKOFF\.md[\s\S]*Next action: [\s\S]*do not rely on earlier completion claims/);
+  assert.doesNotMatch(checkpoint, /Unpublished/);
+
+  const remote = mkdtempSync(join(tmpdir(), 'genesis-remote-'));
+  execFileSync('git', ['init', '-q', '--bare'], { cwd: remote });
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  assert.match(run(['checkpoint', repo]).stdout, /Unpublished: branch \S+ has never been pushed/);
+  execFileSync('git', ['push', '-q', '-u', 'origin', 'HEAD'], { cwd: repo });
+  assert.doesNotMatch(run(['checkpoint', repo]).stdout, /Unpublished/);
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'local only'], { cwd: repo });
+  checkpoint = run(['checkpoint', repo]).stdout;
+  assert.match(checkpoint, /Unpublished: branch \S+ is 1 commit ahead of its upstream/);
+});
+
+test('adding a risky task without an outcome scenario prints an advisory note', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  const gate = ['--gate', 'tests:node -e "process.exit(0)"'];
+  const scenario = JSON.stringify({ id: 'save', actor: 'signed-in user', scope: 'own items', environment: 'test', duration: 'one save', observable: 'item survives reload', gate: 'tests' });
+  assert.match(run(['task', 'add', repo, '--id', 'T-1', '--risk', 'medium', '--outcome', 'Save items', ...gate]).stderr, /T-1 is medium risk and has no --scenario/);
+  assert.equal(run(['task', 'add', repo, '--id', 'T-2', '--risk', 'medium', '--outcome', 'Save items', ...gate, '--scenario', scenario]).stderr, '');
+  assert.equal(run(['task', 'add', repo, '--id', 'T-3', '--outcome', 'Rename a label', ...gate]).stderr, '');
+  assert.equal(state(repo).tasks.length, 3);
+});
+
+test('a papercut records the friction an agent worked around and can be listed', () => {
+  const repo = tempRepo();
+  run(['init', repo]);
+  run(['trace', repo, '--event', 'papercut'], { ok: false });
+  run(['trace', repo, '--event', 'papercut', '--message', 'tried task add --help; expected usage; got an error; fix: print help. token=abc123']);
+  run(['trace', repo, '--event', 'tool.error', '--message', 'unrelated']);
+  const listed = run(['trace', repo, '--list', 'papercut']).stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(listed.length, 1);
+  assert.match(listed[0].data.message, /tried task add --help; expected usage/);
+  assert.doesNotMatch(listed[0].data.message, /abc123/);
+  assert.ok(run(['trace', repo, '--list']).stdout.trim().split('\n').length >= 2);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /--event papercut/);
 });
