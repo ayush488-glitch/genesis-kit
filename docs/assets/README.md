@@ -12,4 +12,4 @@ pdftoppm -png -singlefile -r 210 \
 
 Commit the `.tex`, vector `.pdf` and rendered `.png` together. Tectonic may download TeX packages on its first run. These are documentation-build tools, not Genesis runtime dependencies.
 
-The figure separates the development lifecycle, canonical repository state, generated context/recovery/views, and evaluated-learning path. Dashed arrows indicate feedback into later work. The trust-boundary note is part of the architecture: local files and working directories do not authenticate reviewers or isolate an evaluator.
+The figure separates the development lifecycle, canonical repository state, generated context/recovery/views, and evaluated-learning path. Dashed arrows indicate feedback into later work; the continuation arrow carries only the next task that was named or that depended on the finished one. The lifecycle ends at a handoff, which is a pull request for a build task or a recorded blocker, and merging stays a human decision. The trust-boundary note is part of the architecture: local files and working directories do not authenticate reviewers, human or model, or isolate an evaluator.
