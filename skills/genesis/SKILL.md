@@ -32,6 +32,8 @@ Query the index before reading widely or grepping. `genesis query <repo> search 
 
 Index answers are advisory static analysis, not authority: confirm in source before relying on one. A result marked `ambiguous` means several definitions matched and none were ruled out, so read the candidates rather than taking the first. Symbols are found by an anchored line scan and only JavaScript, TypeScript and Python are extracted, so absence from the index is not evidence of absence in the repository.
 
+Keep going on authorized work. Stop only for a Genesis gate, an action the human has not authorized that is irreversible, spends money or reaches outside the repository, or a real blocker, conflicting requirement or uncertain side effect. Look in the repository, its configuration and attached tools before asking the human for a fact, and say what you checked. A build task ends at an opened pull request for its branch unless pushing is restricted; never push to the default branch, merge or deploy unasked. `genesis.md` has the full rule.
+
 Obey the workflow phase instruction in `KICKOFF.md`. During discovery, specification, and planning, do not write product implementation code.
 
 ## New-product workflow

@@ -635,6 +635,7 @@ function renderKickoff(repo, state) {
     ...(contextError ? [`**Context requires attention:** ${contextError}. Fetch a complete packet with a larger --bytes budget before implementation.`] : [`Context fingerprint: ${selected.fingerprint}. Use --since only after receiving that full packet; kickoff is not the packet.`]),
     ...records.map(r => `- ${r.id}: ${r.title || excerpt(r.summary || r.text, 100)}`),
     'Applicable invariants, active rules, authorization and proof references are in the packet. Truncated summaries are retrieval pointers, not the full evidence.',
+    'Keep going on authorized work: stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker. Look before asking the human for a fact. A build task ends at an opened pull request unless pushing is restricted.',
     'Reuse fresh gates with --reuse. Reconcile interrupted attempts before replaying commands. Report state → evidence → blocker → next action; checkpoint before stopping.', '',
   ];
   atomicWrite(join(genesisDir(repo), 'KICKOFF.md'), lines.join('\n'));

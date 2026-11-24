@@ -2,6 +2,9 @@
 
 ## 2.4.0 — Unreleased
 
+- Add a continuation rule to the operating contract, the skill, the kickoff and the implement guide: keep going on authorized work, stop only for a Genesis gate, an unauthorized irreversible or outward action, or a real blocker, and look in the repository and attached tools before asking the human for a fact. Agents were handing back to ask whether to commit, continue to the next approved milestone, or for facts they later found themselves.
+- State where a build task ends: an opened pull request for the task branch, unless pushing is restricted. Merging, deploying and pushing to the default branch stay with the human. The contract previously ended at `task complete` and a checkpoint, and work accumulated as unpushed local commits.
+
 - Make `genesis status` answer "what is left": it now prints task counts by state and the open tasks with their outcomes. The plain output previously named only the active task, so the question had to be answered from memory or by reading state.
 - Print a paste-ready resume prompt from `genesis checkpoint`, ending with an instruction to verify state before building rather than trust earlier completion claims.
 - Flag unpublished work at checkpoint: when the branch has never been pushed or is ahead of its upstream, say so. Nothing is pushed automatically.

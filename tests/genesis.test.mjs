@@ -402,6 +402,8 @@ test('a record can supersede one of another type, and kickoff names the launcher
   assert.equal(project.assumptions[0].status, 'superseded');
   assert.equal(project.assumptions[0].superseded_by, 'K-1');
   assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /command not found.*~\/\.local\/bin\/genesis/);
+  assert.match(readFileSync(join(repo, '.genesis', 'KICKOFF.md'), 'utf8'), /Keep going on authorized work: stop only for[^\n]*opened pull request/);
+  assert.match(run(['brief', repo, '--stage', 'implement', '--bytes', '8000']).stdout, /open a pull request/);
 });
 
 test('status rolls up what is done and left, and checkpoint prints a resume prompt and flags unpublished work', () => {

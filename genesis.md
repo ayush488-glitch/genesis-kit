@@ -35,6 +35,20 @@ Proof is fail-closed: mandatory evidence must be `pass` and match current source
 
 Run `genesis serve <repo>` to watch the codebase as a live map while working; it reindexes on save and is read-only. Use local traces for debugging. Secrets are always redacted, raw traces are not committed, and the generated dashboard never becomes a second source of truth.
 
+## Keep going
+
+Once work is authorized, finish it before handing back. Stop only for:
+
+- a Genesis gate: specification approval, plan approval, independent review, authorization, rule promotion;
+- an action the human has not already authorized that is irreversible, spends money, or reaches people or systems outside the repository: production deploys, migrations, messages, publishing;
+- a real blocker, a conflicting requirement, or an uncertain side effect.
+
+A question the repository, its configuration, the environment or an attached tool can answer is not a blocker. Look first, and when you do ask, say what you checked. Do not go looking for credentials you were not given.
+
+For a build task the handoff is an opened pull request: push the task branch and open one that states the outcome, the gates that ran and what is not covered. Do this without asking unless the repository's instructions or the human restrict pushing. Never push to the default branch, merge, or deploy on your own.
+
+A handback says what was verified, what was only built, and what is left. If a gate or the user-visible outcome has not been exercised, say so first instead of calling the task done.
+
 ## Finish or pause
 
 Run relevant gates, record blockers honestly, and run `genesis checkpoint <repo>`. The generated kickoff must identify completed work, current work, evidence, blocker, and one exact next action.
