@@ -80,6 +80,27 @@ test('resolves tsconfig path aliases and workspace packages across a monorepo', 
   assert(graph.nodes.some(({ id }) => id === 'package:npm:react'));
 });
 
+test('resolves absolute imports against a declared Python source root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'genesis-pyroot-'));
+  mkdirSync(join(root, 'src', 'agents'), { recursive: true });
+  mkdirSync(join(root, 'tests'), { recursive: true });
+  // The src/ layout setuptools documents: packages live under src/, tests import them by bare name.
+  writeFileSync(join(root, 'pyproject.toml'), '[tool.setuptools.packages.find]\nwhere = ["src"]\n');
+  writeFileSync(join(root, 'src', 'agents', '__init__.py'), '');
+  writeFileSync(join(root, 'src', 'agents', 'runner.py'), 'def run():\n    return True\n');
+  writeFileSync(join(root, 'tests', 'test_runner.py'), 'from agents.runner import run\nimport pytest\n');
+
+  const graph = JSON.parse(execFileSync(process.execPath, [graphizer, root], { encoding: 'utf8' }));
+  const edge = (specifier) => graph.edges.find((e) => e.specifier === specifier && e.source === 'file:tests/test_runner.py');
+  assert.equal(edge('agents.runner').target, 'file:src/agents/runner.py', 'declared source root');
+  assert.equal(edge('agents.runner').resolved, true);
+  // The first-party module must not be filed as a package; that is what made impact answer nothing.
+  assert(!graph.nodes.some(({ id }) => id === 'package:pypi:agents'), 'first-party module filed as PyPI package');
+  // A genuine third party still stays external rather than being force-resolved.
+  assert.equal(edge('pytest').resolved, false);
+  assert(graph.nodes.some(({ id }) => id === 'package:pypi:pytest'));
+});
+
 test('extracts top-level declaration kinds without claiming nested ones', () => {
   const root = mkdtempSync(join(tmpdir(), 'genesis-symbols-'));
   mkdirSync(join(root, 'src'), { recursive: true });
